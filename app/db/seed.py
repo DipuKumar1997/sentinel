@@ -8,9 +8,10 @@ from __future__ import annotations
 import asyncio
 
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.db.session import AsyncSessionLocal
-from app.models.rbac import Permission, Role, RoleName, role_permissions
+from app.models.rbac import Permission, Role, RoleName
 
 _PERMISSIONS = [
     ("case.view", "View cases within own organization"),
@@ -26,28 +27,11 @@ _PERMISSIONS = [
 _ROLE_PERMISSIONS = {
     RoleName.EMPLOYEE: ["case.view"],
     RoleName.SECURITY_ANALYST: ["case.view", "evidence.view"],
-    RoleName.INVESTIGATOR: [
-        "case.view",
-        "case.assign",
-        "evidence.view",
-        "evidence.export",
-    ],
-    RoleName.SOC_ADMIN: [
-        "case.view",
-        "case.assign",
-        "case.escalate",
-        "evidence.view",
-        "evidence.export",
-        "user.manage",
-    ],
+    RoleName.INVESTIGATOR: ["case.view", "case.assign", "evidence.view", "evidence.export"],
+    RoleName.SOC_ADMIN: ["case.view", "case.assign", "case.escalate", "evidence.view", "evidence.export", "user.manage"],
     RoleName.ORG_ADMIN: [
-        "case.view",
-        "case.assign",
-        "case.escalate",
-        "evidence.view",
-        "evidence.export",
-        "user.manage",
-        "org.manage",
+        "case.view", "case.assign", "case.escalate", "evidence.view", "evidence.export",
+        "user.manage", "org.manage",
     ],
     RoleName.PLATFORM_ADMIN: [p[0] for p in _PERMISSIONS],
 }
@@ -55,38 +39,29 @@ _ROLE_PERMISSIONS = {
 
 async def seed() -> None:
     async with AsyncSessionLocal() as db:
-        # ---------------------------------------------------------
-        # 1. Ensure all permissions exist
-        # ---------------------------------------------------------
         existing_perms = {
             p.code: p
-            for p in (
-                await db.execute(select(Permission))
-            ).scalars().all()
+            for p in (await db.execute(select(Permission))).scalars().all()
         }
 
         for code, description in _PERMISSIONS:
             if code not in existing_perms:
-                perm = Permission(
-                    code=code,
-                    description=description,
-                )
+                perm = Permission(code=code, description=description)
                 db.add(perm)
                 existing_perms[code] = perm
 
         await db.flush()
 
-        # ---------------------------------------------------------
-        # 2. Ensure all roles exist
-        # ---------------------------------------------------------
         existing_roles = {
             r.name: r
             for r in (
-                await db.execute(select(Role))
+                await db.execute(
+                    select(Role).options(selectinload(Role.permissions))
+                )
             ).scalars().all()
         }
 
-        for role_name in _ROLE_PERMISSIONS:
+        for role_name, perm_codes in _ROLE_PERMISSIONS.items():
             role = existing_roles.get(role_name.value)
 
             if role is None:
@@ -98,37 +73,7 @@ async def seed() -> None:
                 await db.flush()
                 existing_roles[role_name.value] = role
 
-        # ---------------------------------------------------------
-        # 3. Ensure role-permission mappings exist
-        # ---------------------------------------------------------
-        existing_mappings = {
-            (role_id, permission_id)
-            for role_id, permission_id in (
-                await db.execute(
-                    select(
-                        role_permissions.c.role_id,
-                        role_permissions.c.permission_id,
-                    )
-                )
-            ).all()
-        }
-
-        for role_name, perm_codes in _ROLE_PERMISSIONS.items():
-            role = existing_roles[role_name.value]
-
-            for code in perm_codes:
-                permission = existing_perms[code]
-
-                mapping = (role.id, permission.id)
-
-                if mapping not in existing_mappings:
-                    await db.execute(
-                        role_permissions.insert().values(
-                            role_id=role.id,
-                            permission_id=permission.id,
-                        )
-                    )
-                    existing_mappings.add(mapping)
+            role.permissions = [existing_perms[c] for c in perm_codes]
 
         await db.commit()
 

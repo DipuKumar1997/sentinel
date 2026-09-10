@@ -1,28 +1,32 @@
-"""Model-prediction service.
+"""Structural/header-feature model-prediction service.
+
+One of two independent models feeding risk fusion -- see
+`app/services/ml_common.py` for how this relates to
+`ml_scoring_text.py`, the real-data text-content model.
 
 Loads the trained `phishing_classifier_lr` bundle (see
 `scripts/train_model.py`) at import time if present, and falls back to
 `heuristic_model_v0` -- a transparent, hand-weighted scoring function --
 if the model artifact is missing. Either path populates the same
-`ModelOutput` shape, so the rest of the pipeline (risk fusion,
-`ModelPrediction` persistence) never needs to know which one ran.
+`ModelOutput` shape.
 
-Honesty note (see docs/threat_model.md): the trained model was fit on
+Honesty note (see docs/threat_model.md): this model was fit on
 **synthetically generated** feature combinations (no real-world labeled
-corpus was available in this environment) -- its `model_version` string
-is suffixed `-synthetic` for exactly this reason. It demonstrates a real,
-fitted classifier in the pipeline rather than only a scaffold, but
-should not be read as validated against real phishing traffic.
+corpus was available for these specific structural signals -- e.g. no
+dataset exists that pairs SPF/DKIM results with ground-truth labels).
+Its `model_version` string is suffixed `-synthetic` for exactly this
+reason. Contrast with `ml_scoring_text.py`, which IS trained on real
+labeled email text.
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from pathlib import Path
 
 from app.services.analysis_engines.header_forensics import Finding
 from app.services.auth_results import AuthFinding
 from app.services.eml_parser import ParsedEmail
+from app.services.ml_common import ModelOutput
 from app.services.ml_features import extract_feature_vector
 
 _MODEL_PATH = Path(__file__).resolve().parent.parent / "ml_models" / "phishing_classifier.joblib"
@@ -34,15 +38,6 @@ _URGENCY_TERMS = (
     "urgent", "immediately", "verify your account", "suspended", "act now",
     "confirm your password", "unusual activity", "will be closed",
 )
-
-
-@dataclass
-class ModelOutput:
-    model_name: str
-    model_version: str
-    label: str  # phishing|bec|benign
-    probability: float
-    is_external_model: bool = False
 
 
 def _sigmoid(x: float) -> float:
@@ -57,8 +52,6 @@ def _load_trained_bundle():
 
         return joblib.load(_MODEL_PATH)
     except Exception:
-        # Any load failure (missing joblib, corrupt file, version skew)
-        # degrades to the heuristic model rather than crashing ingestion.
         return None
 
 
@@ -138,25 +131,18 @@ def score_email(
     domains: set[str] | None = None,
     urls: set[str] | None = None,
 ) -> ModelOutput:
-    """Scores an email using the trained model if available, else the
-    heuristic fallback. `domains`/`urls` are optional for backward
-    compatibility with earlier callers; the trained model needs them for
-    its full feature vector and falls back to the heuristic path if
-    they're not supplied.
+    """Scores an email using the trained structural model if available,
+    else the heuristic fallback.
     """
     if _TRAINED_BUNDLE is not None and domains is not None and urls is not None:
         try:
             return _score_with_trained_model(parsed, auth_findings, domains, urls)
         except Exception:
-            pass  # fall through to heuristic on any inference-time error
+            pass
     return _score_with_heuristic(parsed, auth_findings, iocs_url_count)
 
 
 def model_output_to_finding(output: ModelOutput) -> Finding | None:
-    """Converts a model prediction into a risk-fusion Finding, only when
-    it's confident enough to be worth surfacing (avoids drowning the
-    findings list in low-confidence "benign" predictions).
-    """
     if output.label == "benign" or output.probability < 0.5:
         return None
 
@@ -169,15 +155,15 @@ def model_output_to_finding(output: ModelOutput) -> Finding | None:
 
     is_trained = "synthetic" in output.model_version or output.model_name != HEURISTIC_MODEL_NAME
     caveat = (
-        "This is a trained classifier fit on synthetically generated data (not real-world "
-        "labeled traffic) -- see docs/threat_model.md."
+        "This is a trained classifier fit on synthetically generated structural features "
+        "(not real-world labeled traffic) -- see docs/threat_model.md."
         if is_trained
         else "This is a heuristic v0 scaffold, not a trained classifier -- see docs/threat_model.md."
     )
 
     return Finding(
-        engine="ml_model",
-        code=f"MODEL_PREDICTION_{output.label.upper()}",
+        engine="ml_model_structural",
+        code=f"STRUCTURAL_MODEL_PREDICTION_{output.label.upper()}",
         severity=severity,
         confidence=output.probability,
         description=(

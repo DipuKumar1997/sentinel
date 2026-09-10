@@ -55,6 +55,22 @@ services:
       - evidence_data:/data/evidence
     command: celery -A app.workers.celery_app worker --loglevel=info
 
+  # Optional Postgres admin UI at http://localhost:5050 -- lets you browse
+  # tables/run SQL against the `db` service visually. Dev convenience only;
+  # change PGADMIN_DEFAULT_PASSWORD (or remove this service entirely)
+  # before ever exposing this stack beyond localhost.
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-adminpassword}
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
   evidence_data:

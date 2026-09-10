@@ -48,6 +48,7 @@ async def register_user(
         raise AuthError("An account with this email already exists.", 409)
 
     org = await db.scalar(select(Organization).where(Organization.domain == domain))
+    is_new_organization = org is None
     if org is None:
         org = Organization(
             name=organization_name,
@@ -58,12 +59,21 @@ async def register_user(
         db.add(org)
         await db.flush()
 
+    # The first person to register for a brand-new organization is
+    # establishing that tenant, so they become its admin automatically
+    # (there would otherwise be no path to ever reach org_admin -- see
+    # CHANGELOG.md). Anyone joining an ALREADY-existing organization
+    # (i.e. a colleague registering after the first person) gets the
+    # baseline `employee` role; promoting them further is an org_admin
+    # action, not a self-service one.
+    initial_role = RoleName.ORG_ADMIN if is_new_organization else RoleName.EMPLOYEE
+
     user = User(
         organization_id=org.id,
         email=email.lower(),
         full_name=full_name,
         hashed_password=hash_password(password),
-        role=RoleName.EMPLOYEE,
+        role=initial_role,
         status=AccountStatus.PENDING_VERIFICATION,
         is_email_verified=False,
     )

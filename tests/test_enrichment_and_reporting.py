@@ -38,7 +38,7 @@ async def test_threat_intel_and_ml_findings_present(client, sample_phish_eml_byt
     # language should push the heuristic ML scaffold's probability high
     # enough to surface a finding.
     assert "threat_intelligence" in engines
-    assert "ml_model" in engines
+    assert "ml_model_structural" in engines
 
 
 @pytest.mark.asyncio

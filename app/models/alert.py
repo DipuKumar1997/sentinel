@@ -88,6 +88,18 @@ class ApiKey(UUIDPKMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # The case's `reporter_user_id` FK requires a real User row even for
+    # API-key-driven ingestion (e.g. a mail-gateway integration, not a
+    # human). Each API key gets one dedicated, non-loginable "service
+    # account" user created alongside it, so cases created via this key
+    # are still attributable and audit-traceable, never anonymous.
+    service_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
 
 class NotificationEvent(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "notification_events"

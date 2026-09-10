@@ -38,7 +38,10 @@ async def test_register_login_verify_flow(client):
     )
     assert r.status_code == 200
     assert r.json()["email"] == "alice@acmecorp.com"
-    assert r.json()["role"] == "employee"
+    # Alice is the FIRST person to register for "Acme Corp" (a brand-new
+    # organization), so she becomes its admin automatically -- see
+    # auth_service.py::register_user and CHANGELOG.md for why.
+    assert r.json()["role"] == "org_admin"
 
 
 @pytest.mark.asyncio

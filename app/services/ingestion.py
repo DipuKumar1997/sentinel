@@ -25,7 +25,7 @@ from app.models.email import AuthenticationResult, EmailHeader, EmailMessage, Re
 from app.models.evidence import EvidenceHash, EvidenceKind, EvidenceObject
 from app.models.ioc import Attachment, Domain, IOCRecord, IOCType, IPAddress, URLRecord
 from app.services import auth_results as auth_results_svc
-from app.services import campaign_correlation, ml_scoring, threat_intel
+from app.services import campaign_correlation, ml_scoring_structural, ml_scoring_text, threat_intel
 from app.services.analysis_engines import header_forensics, threat_intel_engine, url_domain_analysis
 from app.services.eml_parser import ParsedEmail, parse_eml_bytes
 from app.services.evidence_storage import store_evidence_bytes
@@ -302,27 +302,52 @@ async def ingest_email_and_create_case(
     except Exception:
         run_degraded = True
 
-    # --- Deterministic + heuristic-model analysis engines ---
+    # --- Deterministic + dual ML-model analysis engines ---
     hf_findings = header_forensics.run(parsed, auth_findings)
     ud_findings = url_domain_analysis.run(iocs.urls, iocs.domains, parsed.body_text, parsed.body_html)
     ti_findings = threat_intel_engine.run(threat_intel_observations)
 
-    model_output = ml_scoring.score_email(
+    # Model 1: structural/header-feature model (trained on synthetic
+    # data if the artifact exists, else the transparent heuristic).
+    structural_output = ml_scoring_structural.score_email(
         parsed, auth_findings, len(iocs.urls), domains=iocs.domains, urls=iocs.urls
     )
     db.add(
         ModelPrediction(
             analysis_run_id=run.id,
-            model_name=model_output.model_name,
-            model_version=model_output.model_version,
-            label=model_output.label,
-            probability=model_output.probability,
-            is_external_model=model_output.is_external_model,
+            model_name=structural_output.model_name,
+            model_version=structural_output.model_version,
+            label=structural_output.label,
+            probability=structural_output.probability,
+            is_external_model=structural_output.is_external_model,
         )
     )
-    model_finding = ml_scoring.model_output_to_finding(model_output)
+    structural_finding = ml_scoring_structural.model_output_to_finding(structural_output)
 
-    all_findings = hf_findings + ud_findings + ti_findings + ([model_finding] if model_finding else [])
+    # Model 2: text-content model trained on REAL labeled email data --
+    # only present once you've run scripts/fetch_datasets.py +
+    # scripts/train_text_model.py; absent, it contributes nothing rather
+    # than fabricating a prediction (see ml_scoring_text.py docstring).
+    text_output = ml_scoring_text.score_email(parsed)
+    text_finding = None
+    if text_output is not None:
+        db.add(
+            ModelPrediction(
+                analysis_run_id=run.id,
+                model_name=text_output.model_name,
+                model_version=text_output.model_version,
+                label=text_output.label,
+                probability=text_output.probability,
+                is_external_model=text_output.is_external_model,
+            )
+        )
+        text_finding = ml_scoring_text.model_output_to_finding(text_output)
+
+    all_findings = (
+        hf_findings + ud_findings + ti_findings
+        + ([structural_finding] if structural_finding else [])
+        + ([text_finding] if text_finding else [])
+    )
 
     for f in all_findings:
         db.add(

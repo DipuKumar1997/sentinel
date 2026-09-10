@@ -1,12 +1,21 @@
 """Email submission/ingestion endpoints.
 
-Enforces the core product rule: the REPORTER is the authenticated caller
-(from the JWT), never anything read out of the uploaded email itself. If
-the caller's account is not registered/active, we do not attempt to
-create a case at all -- registration is a separate, explicit step.
+Enforces the core product rule: the REPORTER is a verified identity
+(from a JWT session OR an API key), never anything read out of the
+uploaded email itself. If the caller's account/key is not
+registered/active, we do not attempt to create a case at all.
 
 Two upload formats are supported, normalized to the same pipeline:
 `.eml` (RFC 5322/MIME) and Outlook `.msg`.
+
+Two intake modes are supported per this file: an authenticated human
+(JWT, via the dashboard or a direct API call) and a programmatic
+integration (`X-API-Key` header, e.g. a mail gateway or security tool
+posting emails without a human in the loop) -- see
+`app/security/deps.py::get_current_actor` and
+`app/services/api_key_service.py`. A third mode, forward-to-mailbox
+(an org forwards suspicious mail to a dedicated inbox this platform
+polls), is not yet implemented -- see NEXT_STEPS.md.
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -15,9 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.evidence import EvidenceHash, EvidenceKind, EvidenceObject
-from app.models.user import User
 from app.schemas.case import CaseOut, CaseSubmitResponse
-from app.security.deps import get_current_user
+from app.security.deps import ActorContext, get_current_actor
 from app.services import ingestion
 from app.services.audit import record_audit_event
 
@@ -29,7 +37,7 @@ async def _handle_submission(
     file: UploadFile,
     source_format: str,
     allowed_suffixes: tuple[str, ...],
-    current_user: User,
+    actor: ActorContext,
     db: AsyncSession,
 ) -> CaseSubmitResponse:
     if not file.filename or not file.filename.lower().endswith(allowed_suffixes):
@@ -53,8 +61,8 @@ async def _handle_submission(
     try:
         case, email_message, risk_score = await ingestion.ingest_email_and_create_case(
             db,
-            organization_id=current_user.organization_id,
-            reporter_user_id=current_user.id,
+            organization_id=actor.organization_id,
+            reporter_user_id=actor.reporter_user_id,
             raw_bytes=raw_bytes,
             original_filename=file.filename,
             source_format=source_format,
@@ -64,12 +72,17 @@ async def _handle_submission(
 
     await record_audit_event(
         db,
-        organization_id=current_user.organization_id,
-        actor_user_id=current_user.id,
+        organization_id=actor.organization_id,
+        actor_user_id=actor.reporter_user_id,
         action=f"case.create_from_{source_format}",
         resource_type="case",
         resource_id=str(case.id),
-        detail={"risk_score": risk_score.score, "classification": risk_score.classification},
+        detail={
+            "risk_score": risk_score.score,
+            "classification": risk_score.classification,
+            "via_api_key": actor.is_api_key,
+            "api_key_name": actor.api_key_name,
+        },
     )
 
     evidence_hash = None
@@ -95,22 +108,22 @@ async def _handle_submission(
 @router.post("/eml", response_model=CaseSubmitResponse, status_code=status.HTTP_201_CREATED)
 async def submit_eml(
     file: UploadFile,
-    current_user: User = Depends(get_current_user),
+    actor: ActorContext = Depends(get_current_actor),
     db: AsyncSession = Depends(get_db),
 ):
     return await _handle_submission(
         file=file, source_format="eml", allowed_suffixes=(".eml",),
-        current_user=current_user, db=db,
+        actor=actor, db=db,
     )
 
 
 @router.post("/msg", response_model=CaseSubmitResponse, status_code=status.HTTP_201_CREATED)
 async def submit_msg(
     file: UploadFile,
-    current_user: User = Depends(get_current_user),
+    actor: ActorContext = Depends(get_current_actor),
     db: AsyncSession = Depends(get_db),
 ):
     return await _handle_submission(
         file=file, source_format="msg", allowed_suffixes=(".msg",),
-        current_user=current_user, db=db,
+        actor=actor, db=db,
     )

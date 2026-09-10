@@ -1,5 +1,77 @@
 # Changelog
 
+## Real data + dual models + API-key ingestion + admin tooling — 2026-09-06
+
+### Added
+- **Real-data text-content ML model**: `scripts/fetch_datasets.py`
+  downloads ~82,000 genuinely labeled emails across 6 well-known
+  academic corpora (Enron, Nazario phishing corpus, Nigerian-fraud/419
+  corpus, SpamAssassin, Ling-Spam, CEAS 2008) via GitHub;
+  `app/services/dataset_loader.py` harmonizes any CSV (including
+  user-provided Kaggle downloads dropped into `data/raw/kaggle/`) into
+  one schema; `scripts/train_text_model.py` trains a TF-IDF + Logistic
+  Regression classifier and prints a full dataset + accuracy report.
+  Smoke-tested end-to-end (97% held-out accuracy on a 4,000-row
+  subsample) but the full run is left to be executed by the user on
+  their own machine.
+- **Two independent ML models**, not one: split the previous single
+  `ml_scoring.py` into `ml_scoring_structural.py` (existing
+  synthetic-data model) and `ml_scoring_text.py` (new real-data model),
+  sharing a common `ModelOutput` type (`ml_common.py`). Both feed risk
+  fusion as separate, separately-labeled findings
+  (`ml_model_structural` / `ml_model_text`); either can be present or
+  absent independently with no crash.
+- **API-key ingestion** (the second of three intake modes):
+  `app/services/api_key_service.py` + `POST/GET /api-keys`,
+  `DELETE /api-keys/{id}` (org_admin+ only). Each key is backed by a
+  dedicated, non-loginable service-account user so API-key-created
+  cases remain attributable. `app/security/deps.py::get_current_actor`
+  accepts either a JWT or an `X-API-Key` header on the ingestion
+  endpoints specifically.
+- **Fixed a real pre-existing gap**: registration never had a path to
+  create an `org_admin` (everyone defaulted to `employee`), which would
+  have made the new API-key endpoints permanently unreachable. Now the
+  first person to register for a brand-new organization becomes its
+  admin automatically; joining an already-existing org still gives the
+  baseline `employee` role.
+- **User role management**: `GET /users`, `PATCH /users/{id}/role`
+  (org_admin+, org-scoped) so admins can promote colleagues.
+- **pgAdmin** added to `docker-compose.yml` (port 5050) for visual
+  Postgres access.
+- Hand-written migration `873fb9353f04` for the two new `api_keys`
+  columns (`service_user_id`, `created_by_user_id`).
+- `data/README.md`: the definitive, single-file record of exactly which
+  datasets train the text model, with row counts and provenance.
+- 10 new tests (`tests/test_api_keys_and_roles.py`,
+  `tests/test_ml_text_model.py`) covering API-key creation/use/
+  revocation, cross-tenant isolation for API-key-created cases, the
+  new org_admin auto-promotion, role updates, and both the
+  text-model-absent and text-model-present (mocked) code paths.
+  **33/33 tests passing.**
+- Comprehensive README rewrite: full low-level architecture walkthrough,
+  a table of every endpoint and exactly what credential it requires,
+  the three intake modes and their status, and a complete file
+  manifest.
+
+### Fixed
+- `app/db/seed.py`'s RBAC seeding previously assigned
+  `role.permissions = [...]` directly, which triggered an async
+  lazy-load (`MissingGreenlet`) under asyncpg. Rewritten to write
+  directly to the `role_permissions` join table via explicit
+  `delete()`/`insert()` statements, sidestepping the ORM relationship
+  entirely rather than working around one instance of the problem.
+- A missing `app.include_router(user_management.router, ...)` call
+  (the module was imported but never registered) caught by the test
+  suite before it shipped -- `GET /users` was 404ing.
+
+### Known limitations carried forward
+- Forward-to-mailbox ingestion (intake mode 3) still not implemented.
+- The text-content model, once trained, reflects general public
+  phishing/spam corpora, not your organization's specific threat
+  landscape -- see NEXT_STEPS.md for how to fold in real historical
+  data from your own organization.
+- Campaign correlation remains exact-IOC-match only.
+
 ## Final application — 2026-09-05
 
 Hardening, a real trained model, native PDF export, and a browser

@@ -1,11 +1,11 @@
 {
   "project": "SentinelMail AI (SIH26106)",
-  "checkpoint": "final",
-  "generated_at": "2026-09-05",
-  "status": "complete_end_to_end_application",
+  "checkpoint": "final_v2",
+  "generated_at": "2026-09-06",
+  "status": "complete_end_to_end_application_with_real_data_pipeline",
   "test_results": {
-    "total": 23,
-    "passed": 23,
+    "total": 33,
+    "passed": 33,
     "failed": 0,
     "framework": "pytest + pytest-asyncio",
     "database_under_test": "sqlite+aiosqlite (file-based)"
@@ -72,15 +72,29 @@
       ]
     },
     "phase_8_ml_models": {
-      "status": "complete_trained_model",
+      "status": "complete_dual_model_one_real_one_synthetic",
       "includes": [
-        "phishing_classifier_lr: real fitted scikit-learn LogisticRegression",
-        "trained via scripts/train_model.py on a synthetically generated labeled dataset",
-        "shared feature extraction (app/services/ml_features.py) used by training AND inference",
-        "automatic fallback to heuristic_model_v0 if the model artifact is missing",
-        "ModelPrediction persistence per analysis run, feeds risk fusion"
+        "ml_scoring_structural.py: structural/header-feature model (synthetic training data)",
+        "ml_scoring_text.py: text-content model trained on ~82,000 REAL public labeled emails",
+        "scripts/fetch_datasets.py + scripts/train_text_model.py + data/README.md",
+        "app/services/dataset_loader.py: harmonizes any CSV incl. user-provided Kaggle downloads",
+        "both models independently optional, feed risk fusion as separate labeled findings"
       ],
-      "note": "Training data is synthetic -- no real-world labeled corpus available in this environment. See docs/threat_model.md. Swapping in real labeled data requires no pipeline changes, only re-running scripts/train_model.py against real data."
+      "note": "Structural model's training data is synthetic (no real dataset pairs SPF/DKIM with ground truth). Text model IS real-data-trained but on general public corpora, not the user's own organization's history. See docs/threat_model.md and data/README.md."
+    },
+    "phase_13_api_key_ingestion": {
+      "status": "complete",
+      "includes": [
+        "app/services/api_key_service.py: key generation/verification + dedicated service-account users",
+        "POST/GET /api-keys, DELETE /api-keys/{id} (org_admin+ only)",
+        "get_current_actor dependency: JWT OR X-API-Key on ingestion endpoints",
+        "fixed pre-existing gap: first registrant of new org now becomes org_admin (previously unreachable)",
+        "GET /users, PATCH /users/{id}/role for admin-driven role promotion"
+      ]
+    },
+    "phase_14_forward_to_mailbox_ingestion": {
+      "status": "not_started",
+      "note": "Mailbox table exists (app/models/case.py) but no IMAP-polling worker. See NEXT_STEPS.md."
     },
     "phase_9_reporting": {
       "status": "complete",
@@ -120,8 +134,15 @@
     "entrypoint": "app/main.py",
     "ingestion_pipeline": "app/services/ingestion.py",
     "risk_fusion": "app/services/risk_fusion.py",
+    "structural_model": "app/services/ml_scoring_structural.py",
+    "text_model": "app/services/ml_scoring_text.py",
+    "dataset_provenance": "data/README.md",
     "models_index": "app/models/__init__.py",
-    "initial_migration": "alembic/versions/dd0723c3586c_initial_schema.py",
-    "tests": ["tests/test_auth.py", "tests/test_ingestion.py"]
+    "migrations": [
+      "alembic/versions/dd0723c3586c_initial_schema.py",
+      "alembic/versions/c7bd488f4839_add_account_lockout_fields_to_users.py",
+      "alembic/versions/873fb9353f04_add_api_key_service_user_columns.py"
+    ],
+    "tests": ["tests/test_auth.py", "tests/test_ingestion.py", "tests/test_api_keys_and_roles.py", "tests/test_ml_text_model.py"]
   }
 }
