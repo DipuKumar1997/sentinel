@@ -46,7 +46,17 @@ class Mailbox(UUIDPKMixin, TimestampMixin, Base):
     imap_use_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
     imap_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encrypted_password: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    imap_folder: Mapped[str] = mapped_column(String(255), default="INBOX")
+    imap_folder: Mapped[str] = mapped_column(String(255), default="Sentinel_Intake")
+
+    # SMTP send-back config -- reuses the SAME encrypted credentials as
+    # IMAP (imap_username/encrypted_password above), since for Gmail
+    # (and most providers) one App Password authenticates both IMAP
+    # receiving and SMTP sending on the same account. Only the
+    # host/port/TLS settings differ, hence separate fields for those.
+    smtp_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_port: Mapped[int] = mapped_column(Integer, default=587)
+    smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_reporter: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Polling state.
     is_polling_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

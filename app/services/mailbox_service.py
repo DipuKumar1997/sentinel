@@ -35,7 +35,11 @@ async def create_mailbox(
     imap_use_ssl: bool,
     imap_username: str,
     imap_password: str,
-    imap_folder: str = "INBOX",
+    imap_folder: str = "Sentinel_Intake",
+    smtp_host: str | None = None,
+    smtp_port: int = 587,
+    smtp_use_tls: bool = True,
+    notify_reporter: bool = True,
 ) -> Mailbox:
     existing = await db.scalar(select(Mailbox).where(Mailbox.address == address.lower()))
     if existing:
@@ -66,6 +70,10 @@ async def create_mailbox(
         imap_folder=imap_folder,
         is_polling_enabled=True,
         service_user_id=service_user.id,
+        smtp_host=smtp_host,
+        smtp_port=smtp_port,
+        smtp_use_tls=smtp_use_tls,
+        notify_reporter=notify_reporter,
     )
     db.add(mailbox)
     await db.commit()

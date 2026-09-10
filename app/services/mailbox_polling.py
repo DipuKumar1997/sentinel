@@ -1,42 +1,14 @@
 """IMAP mailbox polling: turns "employee forwards suspicious mail to
 security@company.com" into cases automatically.
-
-Design notes (see docs/mailbox_forwarding_setup.md for the operational
-setup guide):
-
-- Uses Python's stdlib `imaplib` -- no new external dependency, and
-  works against any real IMAP server (Gmail, Outlook/Office365,
-  self-hosted), not a vendor-specific API.
-- IMAP UIDs (not sequence numbers, which shift as messages are
-  deleted/moved) are the primary de-duplication key, tracked per
-  mailbox in `Mailbox.last_seen_uid`/`uid_validity`. A secondary
-  `MailboxProcessedMessage` row is recorded per processed UID as a
-  second, human-inspectable line of defense against reprocessing.
-- Two forwarding styles are both handled, because Gmail/Outlook/etc.
-  don't agree on which one users get by default:
-    1. "Forward as attachment" -- the original email is a genuine
-       `message/rfc822` MIME part. We extract and analyze THAT nested
-       message, not the wrapping email, since the wrapping email is
-       just the employee's forwarding envelope.
-    2. Plain "Forward" (the common default) -- the original is quoted
-       inline as text in the body (e.g. Gmail's
-       "---------- Forwarded message ---------" marker). There is no
-       separate RFC822 object to extract, so we analyze the delivered
-       message as-is (its body/URLs/attachments ARE the threat
-       surface an analyst cares about) and additionally make a
-       best-effort, clearly-labeled note of what the quoted text
-       *claims* the original sender was -- never trusted, never used
-       for scoring, purely informational context for the analyst.
-- A polling failure for one mailbox (bad credentials, network issue)
-  is recorded on that mailbox and never raises out of the scheduled
-  task -- one broken mailbox must never block others from polling.
 """
 from __future__ import annotations
 
 import hashlib
 import imaplib
 import json
+import logging
 import re
+import traceback
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -47,8 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.case import Mailbox, MailboxProcessedMessage, Note
-from app.services import ingestion
+from app.services import email_notification, ingestion, report_generator
 from app.services.mailbox_service import MailboxError, get_decrypted_password
+
+logger = logging.getLogger(__name__)
 
 _FORWARD_MARKERS = (
     "---------- forwarded message ---------",
@@ -61,7 +35,7 @@ _FROM_LINE_RE = re.compile(r"^\s*from:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 @dataclass
 class ForwardExtraction:
     analysis_bytes: bytes
-    forward_type: str  # attachment | inline | direct
+    forward_type: str
     outer_message_id: str | None
     outer_from: str | None
     claimed_original_sender: str | None = None
@@ -70,7 +44,7 @@ class ForwardExtraction:
 @dataclass
 class PollOutcome:
     uid: int
-    status: str  # created | skipped_duplicate | error
+    status: str
     case_id: uuid.UUID | None = None
     detail: str | None = None
 
@@ -95,9 +69,6 @@ def _extract_forward_target(raw_bytes: bytes) -> ForwardExtraction:
                     outer_from=outer_from,
                 )
 
-    # No genuine nested RFC822 part -- look for an inline-forward marker
-    # and best-effort extract the claimed original sender for informational
-    # purposes only (never authenticated, never fed into scoring).
     body_text = ""
     try:
         if outer.is_multipart():
@@ -142,13 +113,19 @@ def _connect(mailbox: Mailbox) -> imaplib.IMAP4:
     return conn
 
 
-def _parse_uidvalidity(status_response) -> int | None:
-    # Response looks like: [b'INBOX (UIDVALIDITY 12345 UIDNEXT 678)']
+def _parse_imap_status(status_response) -> tuple[int | None, int | None]:
+    """Extracts both UIDVALIDITY and UIDNEXT from the IMAP status response."""
     if not status_response:
-        return None
+        return None, None
     text = status_response[0].decode(errors="replace") if isinstance(status_response[0], bytes) else str(status_response[0])
-    match = re.search(r"UIDVALIDITY (\d+)", text)
-    return int(match.group(1)) if match else None
+
+    val_match = re.search(r"UIDVALIDITY (\d+)", text)
+    nxt_match = re.search(r"UIDNEXT (\d+)", text)
+
+    uidvalidity = int(val_match.group(1)) if val_match else None
+    uidnext = int(nxt_match.group(1)) if nxt_match else None
+
+    return uidvalidity, uidnext
 
 
 async def _process_one_message(
@@ -242,15 +219,57 @@ async def _process_one_message(
         )
     )
     await db.commit()
+
+    # --- Send the report back to whoever forwarded this email ---
+    # Best-effort: notification failure (bad SMTP creds, network issue,
+    # provider rate limit) must never undo or hide the successfully
+    # created case -- only the notification attempt itself is recorded.
+    notification_detail = None
+    if extraction.outer_from:
+        try:
+            html_report, pdf_report = await report_generator.generate_both_formats(db, case=case)
+            result = email_notification.send_report_notification(
+                mailbox,
+                to_header_value=extraction.outer_from,
+                case_number=case.case_number,
+                risk_score=risk_score.score,
+                classification=risk_score.classification,
+                html_report=html_report,
+                pdf_report=pdf_report,
+            )
+            notification_detail = {
+                "sent": result.sent,
+                "recipient": result.recipient,
+                "error_detail": result.error_detail,
+            }
+            if not result.sent:
+                logger.warning(
+                    "Report notification not sent for case %s: %s",
+                    case.case_number, result.error_detail,
+                )
+        except Exception:
+            logger.exception("Unexpected error sending report notification for case %s", case.case_number)
+            notification_detail = {"sent": False, "error_detail": "Unexpected error -- see server logs."}
+
+    if notification_detail is not None:
+        db.add(
+            Note(
+                case_id=case.id,
+                author_user_id=mailbox.service_user_id,
+                body=(
+                    f"Report notification {'sent to' if notification_detail['sent'] else 'NOT sent to'} "
+                    f"{notification_detail.get('recipient') or extraction.outer_from}"
+                    + (f": {notification_detail['error_detail']}" if notification_detail.get("error_detail") else ".")
+                ),
+            )
+        )
+        await db.commit()
+
     return PollOutcome(uid=uid, status="created", case_id=case.id)
 
 
 async def poll_mailbox(db: AsyncSession, mailbox: Mailbox) -> list[PollOutcome]:
-    """Polls one mailbox for new messages since the last poll. Never
-    raises -- connection/auth failures are recorded on the mailbox row
-    and an empty result is returned, so a scheduled sweep over many
-    mailboxes never aborts partway through because one has bad creds.
-    """
+    """Polls one mailbox for new messages since the last poll."""
     if not mailbox.is_polling_enabled or not mailbox.is_active:
         return []
     if not mailbox.imap_host or not mailbox.imap_username or not mailbox.encrypted_password:
@@ -269,22 +288,33 @@ async def poll_mailbox(db: AsyncSession, mailbox: Mailbox) -> list[PollOutcome]:
         return []
 
     outcomes: list[PollOutcome] = []
+
+    # --- CRITICAL FIX: Cache IDs and state to survive rollbacks ---
+    mailbox_id = mailbox.id
+    current_last_seen_uid = mailbox.last_seen_uid
+
     try:
         status, sv_data = conn.status(mailbox.imap_folder, "(UIDVALIDITY UIDNEXT)")
-        current_uidvalidity = _parse_uidvalidity(sv_data) if status == "OK" else None
+        current_uidvalidity, current_uidnext = _parse_imap_status(sv_data) if status == "OK" else (None, None)
+
         if current_uidvalidity is not None and mailbox.uid_validity is not None and current_uidvalidity != mailbox.uid_validity:
-            # The mailbox's UID numbering was reset (rare, but possible
-            # after certain server-side migrations) -- start fresh
-            # rather than risk skipping or misreading messages.
-            mailbox.last_seen_uid = 0
+            current_last_seen_uid = 0
+
         if current_uidvalidity is not None:
             mailbox.uid_validity = current_uidvalidity
+
+        # --- SMART BOOTSTRAP LOGIC ---
+        # If the DB was just wiped/created (current_last_seen_uid == 0), don't process
+        # the entire historical backlog. Fast-forward the bookmark to the end of the inbox.
+        if current_last_seen_uid == 0 and current_uidnext is not None and current_uidnext > 1:
+            current_last_seen_uid = current_uidnext - 2
+            logger.info(f"Fresh database detected. Fast-forwarding {mailbox.address} to UID {current_last_seen_uid}")
 
         status, _ = conn.select(mailbox.imap_folder, readonly=False)
         if status != "OK":
             raise imaplib.IMAP4.error(f"Could not select folder {mailbox.imap_folder!r}")
 
-        search_from = mailbox.last_seen_uid + 1
+        search_from = current_last_seen_uid + 1
         status, uid_data = conn.uid("search", None, f"(UID {search_from}:*)")
         raw_uids = uid_data[0].split() if status == "OK" and uid_data and uid_data[0] else []
         uids = sorted({int(u) for u in raw_uids if int(u) >= search_from})
@@ -295,23 +325,38 @@ async def poll_mailbox(db: AsyncSession, mailbox: Mailbox) -> list[PollOutcome]:
                 if status != "OK" or not msg_data or msg_data[0] is None:
                     outcomes.append(PollOutcome(uid=uid, status="error", detail="IMAP fetch returned no data."))
                     continue
+
                 raw_bytes = msg_data[0][1]
                 outcome = await _process_one_message(db, mailbox=mailbox, uid=uid, raw_bytes=raw_bytes)
                 outcomes.append(outcome)
+
                 if outcome.status in ("created", "skipped_duplicate"):
-                    mailbox.last_seen_uid = max(mailbox.last_seen_uid, uid)
+                    current_last_seen_uid = max(current_last_seen_uid, uid)
                     try:
                         conn.uid("store", str(uid), "+FLAGS", "(\\Seen)")
                     except imaplib.IMAP4.error:
-                        pass  # marking as read is a courtesy, not a correctness requirement
-            except Exception as exc:  # noqa: BLE001 -- one bad message must not abort the sweep
-                outcomes.append(PollOutcome(uid=uid, status="error", detail=str(exc)))
+                        pass
 
+            except Exception as exc:
+                # Rollback the poisoned transaction
+                await db.rollback()
+                logger.exception(f"Unexpected error processing uid {uid}")
+                outcomes.append(
+                    PollOutcome(uid=uid, status="error", detail=f"{type(exc).__name__}: {exc}")
+                )
+
+                # CRITICAL FIX: The rollback expired the 'mailbox' object.
+                # Re-fetch it so the next iteration doesn't crash with MissingGreenlet.
+                mailbox = await db.get(Mailbox, mailbox_id)
+
+        # Apply the final successful state
+        mailbox.last_seen_uid = current_last_seen_uid
         mailbox.last_poll_status = "ok"
         mailbox.last_poll_error = None
         mailbox.last_polled_at = datetime.now(timezone.utc)
         await db.commit()
-    except Exception as exc:  # noqa: BLE001
+
+    except Exception as exc:
         mailbox.last_poll_status = "error"
         mailbox.last_poll_error = str(exc)
         mailbox.last_polled_at = datetime.now(timezone.utc)

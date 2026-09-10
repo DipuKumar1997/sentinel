@@ -1,14 +1,4 @@
-"""End-to-end orchestration: raw email bytes in, a fully analyzed Case out.
-
-This is the "spine" the master prompt describes:
-RAW EMAIL -> EVIDENCE PRESERVATION -> STRUCTURED FORENSIC EXTRACTION ->
-THREAT-INTEL ENRICHMENT -> SPECIALIZED ANALYSIS ENGINES (deterministic +
-heuristic-model) -> RISK FUSION -> CAMPAIGN/GRAPH CORRELATION -> CASE.
-
-Supports both `.eml` (RFC 5322/MIME) and Outlook `.msg` as input formats;
-both are normalized to the same `ParsedEmail` shape before entering the
-shared pipeline below, so every step past parsing is format-agnostic.
-"""
+"""End-to-end orchestration: raw email bytes in, a fully analyzed Case out."""
 from __future__ import annotations
 
 import json
@@ -25,8 +15,9 @@ from app.models.email import AuthenticationResult, EmailHeader, EmailMessage, Re
 from app.models.evidence import EvidenceHash, EvidenceKind, EvidenceObject
 from app.models.ioc import Attachment, Domain, IOCRecord, IOCType, IPAddress, URLRecord
 from app.services import auth_results as auth_results_svc
-from app.services import campaign_correlation, ml_scoring_structural, ml_scoring_text, threat_intel
-from app.services.analysis_engines import header_forensics, threat_intel_engine, url_domain_analysis
+from app.services import blockchain_ledger, campaign_correlation, dns_forensics, ip_intelligence
+from app.services import ml_scoring_structural, ml_scoring_text, origin_resolution, threat_intel, whois_lookup
+from app.services.analysis_engines import header_forensics, infrastructure_analysis, threat_intel_engine, url_domain_analysis
 from app.services.eml_parser import ParsedEmail, parse_eml_bytes
 from app.services.evidence_storage import store_evidence_bytes
 from app.services.ioc_extraction import extract_iocs, normalize_url
@@ -71,7 +62,7 @@ def _parse_bytes(raw_bytes: bytes, fmt: SourceFormat) -> ParsedEmail:
         return parse_eml_bytes(raw_bytes)
     if fmt == "msg":
         return parse_msg_bytes(raw_bytes)
-    raise ValueError(f"Unsupported source format: {fmt}")  # pragma: no cover -- guarded upstream
+    raise ValueError(f"Unsupported source format: {fmt}")
 
 
 _CONTENT_TYPE_BY_FORMAT = {"eml": "message/rfc822", "msg": "application/vnd.ms-outlook"}
@@ -87,13 +78,7 @@ async def ingest_email_and_create_case(
     original_filename: str | None,
     source_format: SourceFormat = "eml",
 ) -> tuple[Case, EmailMessage, RiskScore]:
-    """The single entry point used by the ingestion router, for either
-    supported source format.
 
-    Order of operations matters for evidence integrity: the raw bytes are
-    hashed and persisted BEFORE any parsing is attempted, so even a file
-    that fails to parse still leaves a preserved, hashed evidence record.
-    """
     case = Case(
         organization_id=organization_id,
         case_number=_generate_case_number(),
@@ -184,11 +169,10 @@ async def ingest_email_and_create_case(
             email_message_id=email_message.id,
             claimed_display_name=parsed.from_display_name,
             claimed_address=parsed.from_address,
-            display_name_address_mismatch=False,  # set by header_forensics finding, not stored redundantly here
+            display_name_address_mismatch=False,
         )
     )
 
-    # --- Authentication evidence (SPF/DKIM/DMARC) ---
     auth_header_values = [h.value for h in parsed.headers if h.name.lower() == "authentication-results"]
     auth_findings = auth_results_svc.parse_authentication_results_header(auth_header_values)
 
@@ -212,7 +196,15 @@ async def ingest_email_and_create_case(
             )
         )
 
-    # --- IOC extraction ---
+    # --- Earliest Reliable External Origin (see origin_resolution.py for
+    # the full trust-model explanation). Never fabricated: if the chain
+    # can't establish a reliable origin, origin_determined stays False.
+    origin = origin_resolution.resolve_earliest_reliable_origin(parsed.received_hops)
+    email_message.origin_ip = origin.ip
+    email_message.origin_confidence = origin.confidence
+    email_message.origin_reasoning = origin.reasoning_text
+    email_message.origin_determined = origin.determined
+
     iocs = extract_iocs(parsed)
     ioc_records: list[IOCRecord] = []
     domains_by_id: dict[uuid.UUID, Domain] = {}
@@ -280,7 +272,40 @@ async def ingest_email_and_create_case(
 
     await db.flush()
 
-    # --- Analysis run scaffold ---
+    # --- DNS forensics, WHOIS, and IP infrastructure intelligence ---
+    # Wrapped per-IOC so one failing lookup (timeout, blocked port,
+    # unreachable resolver) never aborts ingestion -- each failure is
+    # recorded as an unsuccessful DNSObservation / left "unavailable"
+    # rather than fabricated or silently dropped.
+    ip_intel_by_id: dict[uuid.UUID, "ip_intelligence.IPIntelligenceResult"] = {}
+    for ip_id, ip_row in ips_by_id.items():
+        try:
+            intel = ip_intelligence.enrich_ip_intelligence(ip_row.address, ip_row.asn_org)
+            ip_intel_by_id[ip_id] = intel
+            if intel.ptr_lookup_success:
+                ip_row.ptr_hostname = intel.ptr_hostname
+            ip_row.hosting_classification = intel.hosting_classification
+            ip_row.hosting_classification_source = intel.hosting_classification_source
+            db.add(dns_forensics.persist_observation(case.id, dns_forensics.query_ptr(ip_row.address)))
+        except Exception:
+            pass  # best-effort enrichment; never blocks ingestion
+
+    for domain_id, domain_row in domains_by_id.items():
+        try:
+            for dns_result in dns_forensics.query_domain_records(domain_row.name):
+                db.add(dns_forensics.persist_observation(case.id, dns_result))
+        except Exception:
+            pass
+        # WHOIS is deliberately NOT queried synchronously here -- raw
+        # WHOIS (TCP port 43) is slow and unreliable across networks
+        # (many corporate/cloud networks block it outright, and
+        # different registries respond at very different speeds), which
+        # would make ingestion latency unpredictable. It's available
+        # on-demand instead via GET /cases/{id}/domain-intelligence --
+        # see app/api/routers/forensics.py.
+
+    await db.flush()
+
     correlation_id = uuid.uuid4().hex
     run = AnalysisRun(
         case_id=case.id,
@@ -291,8 +316,6 @@ async def ingest_email_and_create_case(
     db.add(run)
     await db.flush()
 
-    # --- Phase 6: threat-intel enrichment (domains/IPs only; degrades
-    # gracefully to the offline heuristic provider if enrichment errors) ---
     run_degraded = False
     threat_intel_observations: dict[str, list] = {}
     try:
@@ -302,13 +325,22 @@ async def ingest_email_and_create_case(
     except Exception:
         run_degraded = True
 
-    # --- Deterministic + dual ML-model analysis engines ---
     hf_findings = header_forensics.run(parsed, auth_findings)
     ud_findings = url_domain_analysis.run(iocs.urls, iocs.domains, parsed.body_text, parsed.body_html)
     ti_findings = threat_intel_engine.run(threat_intel_observations)
 
-    # Model 1: structural/header-feature model (trained on synthetic
-    # data if the artifact exists, else the transparent heuristic).
+    # --- Infrastructure analysis: origin, hosting classification, PTR consistency ---
+    infra_findings = [infrastructure_analysis.origin_finding(origin)]
+    from_domain = parsed.from_address.rsplit("@", 1)[-1] if parsed.from_address and "@" in parsed.from_address else None
+    for ip_id, intel in ip_intel_by_id.items():
+        ip_row = ips_by_id[ip_id]
+        hosting_finding = infrastructure_analysis.hosting_classification_finding(ip_row.address, intel)
+        if hosting_finding:
+            infra_findings.append(hosting_finding)
+        ptr_finding = infrastructure_analysis.ptr_mismatch_finding(ip_row.address, intel.ptr_hostname, from_domain)
+        if ptr_finding:
+            infra_findings.append(ptr_finding)
+
     structural_output = ml_scoring_structural.score_email(
         parsed, auth_findings, len(iocs.urls), domains=iocs.domains, urls=iocs.urls
     )
@@ -324,10 +356,6 @@ async def ingest_email_and_create_case(
     )
     structural_finding = ml_scoring_structural.model_output_to_finding(structural_output)
 
-    # Model 2: text-content model trained on REAL labeled email data --
-    # only present once you've run scripts/fetch_datasets.py +
-    # scripts/train_text_model.py; absent, it contributes nothing rather
-    # than fabricating a prediction (see ml_scoring_text.py docstring).
     text_output = ml_scoring_text.score_email(parsed)
     text_finding = None
     if text_output is not None:
@@ -344,7 +372,7 @@ async def ingest_email_and_create_case(
         text_finding = ml_scoring_text.model_output_to_finding(text_output)
 
     all_findings = (
-        hf_findings + ud_findings + ti_findings
+        hf_findings + ud_findings + ti_findings + infra_findings
         + ([structural_finding] if structural_finding else [])
         + ([text_finding] if text_finding else [])
     )
@@ -376,15 +404,30 @@ async def ingest_email_and_create_case(
     run.status = AnalysisRunStatus.DEGRADED if run_degraded else AnalysisRunStatus.COMPLETED
     run.completed_at = datetime.now(timezone.utc)
 
-    # --- Phase 7: campaign & graph correlation (best-effort; a failure
-    # here must never prevent the case/risk-score from being saved) ---
+    # --- Phase 7: campaign & graph correlation
     try:
-        await campaign_correlation.build_graph_for_case(
-            db, organization_id=organization_id, case_id=case.id, ioc_records=ioc_records
-        )
-        await campaign_correlation.correlate_case_into_campaigns(
-            db, organization_id=organization_id, case_id=case.id, ioc_records=ioc_records
-        )
+        # CRITICAL FIX: Use a savepoint so db constraint errors (like long URLs) don't poison the main transaction
+        async with db.begin_nested():
+            await campaign_correlation.build_graph_for_case(
+                db, organization_id=organization_id, case_id=case.id, ioc_records=ioc_records
+            )
+            await campaign_correlation.correlate_case_into_campaigns(
+                db, organization_id=organization_id, case_id=case.id, ioc_records=ioc_records
+            )
+    except Exception:
+        pass
+
+    # --- Blockchain evidence-integrity anchor (hash chain, see
+    # blockchain_ledger.py) -- anchors THIS case's evidence hash into the
+    # organization's tamper-evident ledger. Wrapped in its own savepoint
+    # for the same reason as Phase 7 above: a ledger-write failure must
+    # never prevent the case itself from being saved.
+    try:
+        async with db.begin_nested():
+            await blockchain_ledger.anchor_event(
+                db, organization_id=organization_id, case_id=case.id,
+                event_type="case_created", evidence_sha256=digest,
+            )
     except Exception:
         pass
 
@@ -404,8 +447,6 @@ async def ingest_email_and_create_case(
     return case, email_message, risk_score
 
 
-# Backwards-compatible alias for the .eml-only entry point used by earlier
-# checkpoint code / tests.
 async def ingest_eml_and_create_case(
     db: AsyncSession,
     *,

@@ -181,11 +181,16 @@
       <div id="detail-risk"></div>
 
       <div class="flex-between" style="margin-top:1.5rem;">
+        <h2 style="margin:0;">Forensic Intelligence</h2>
+      </div>
+      <div id="detail-forensics"></div>
+
+      <div class="flex-between" style="margin-top:1.5rem;">
         <h2 style="margin:0;">Findings</h2>
         <div>
-          <a class="linklike" id="report-html-link" target="#">View HTML report</a>
+          <a class="linklike" id="report-html-link" href="#">View HTML report</a>
           &nbsp;|&nbsp;
-          <a class="linklike" id="report-pdf-link" target="#">Download PDF report</a>
+          <a class="linklike" id="report-pdf-link" href="#">Download PDF report</a>
         </div>
       </div>
       <table id="findings-table">
@@ -444,13 +449,11 @@ function wireReportLink(elId, format, filenameFn, caseId) {
     }
   };
 }
-// ---------- case detail ----------
+
 async function openCaseDetail(c) {
   document.getElementById("app-view").classList.add("hidden");
   document.getElementById("case-detail").classList.remove("hidden");
   document.getElementById("detail-title").textContent = `Case ${c.case_number}`;
-  // document.getElementById("report-html-link").href = `${API_BASE}/cases/${c.id}/report?format=html`;
-  // document.getElementById("report-pdf-link").href = `${API_BASE}/cases/${c.id}/report?format=pdf`;
   wireReportLink("report-html-link", "html", () => `${c.case_number}_report.html`, c.id);
   wireReportLink("report-pdf-link", "pdf", () => `${c.case_number}_report.pdf`, c.id);
 
@@ -472,6 +475,50 @@ async function openCaseDetail(c) {
     `;
   } catch (err) {
     riskEl.innerHTML = `<p class="muted">No risk score available yet.</p>`;
+  }
+
+  const forensicsEl = document.getElementById("detail-forensics");
+  forensicsEl.innerHTML = `<p class="muted">Loading forensic intelligence...</p>`;
+  try {
+    const [origin, ipIntel, blockchain] = await Promise.all([
+      api(`/cases/${c.id}/origin`),
+      api(`/cases/${c.id}/ip-intelligence`),
+      api(`/cases/${c.id}/blockchain-verify`),
+    ]);
+
+    const ipRows = ipIntel.ips.map(ip => `
+      <tr>
+        <td class="mono" style="font-family:monospace;">${ip.ip}</td>
+        <td>${ip.asn_organization || "unavailable"}</td>
+        <td>${ip.country || "unavailable"}</td>
+        <td>${ip.reverse_dns_hostname || "unavailable"}</td>
+        <td>${ip.hosting_classification || "unavailable"}</td>
+      </tr>
+    `).join("");
+
+    forensicsEl.innerHTML = `
+      <div class="row">
+        <div>
+          <p class="muted" style="margin-bottom:.3rem;">Earliest Reliable Origin</p>
+          ${origin.origin_determined
+            ? `<p style="font-family:monospace;">${origin.origin_ip} <span class="muted">(${(origin.origin_confidence*100).toFixed(0)}% confidence)</span></p>`
+            : `<p class="muted">Origin IP could not be established with high confidence.</p>`}
+        </div>
+        <div>
+          <p class="muted" style="margin-bottom:.3rem;">Blockchain Evidence Integrity</p>
+          <span class="badge ${blockchain.verified ? "benign" : "malicious"}">${blockchain.verified ? "VERIFIED" : "MISMATCH"}</span>
+        </div>
+      </div>
+      <table style="margin-top:.75rem;">
+        <thead><tr><th>IP</th><th>ASN Org</th><th>Country</th><th>Reverse DNS</th><th>Hosting</th></tr></thead>
+        <tbody>${ipRows || '<tr><td colspan="5" class="muted">No IP indicators on this case.</td></tr>'}</tbody>
+      </table>
+      <p class="muted" style="font-size:.75rem;margin-top:.5rem;">
+        Geolocation and hosting data represent observed network infrastructure, not a physical location or identity claim.
+      </p>
+    `;
+  } catch (err) {
+    forensicsEl.innerHTML = `<p class="muted">Forensic intelligence unavailable for this case.</p>`;
   }
 
   const findings = await api(`/cases/${c.id}/findings`);

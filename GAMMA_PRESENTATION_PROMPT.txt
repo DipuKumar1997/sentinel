@@ -1,0 +1,124 @@
+GAMMA.APP PRESENTATION PROMPT — SentinelMail AI
+=================================================
+Paste everything below this line into Gamma.app's "Generate from text" prompt box.
+Target: exactly 10 slides.
+=================================================
+
+Create a 10-slide investor/hackathon-judge pitch deck for "SentinelMail AI" — an
+AI-powered Email Threat Detection, Forensic Intelligence, and Infrastructure
+Attribution Platform, built for Smart India Hackathon (problem statement SIH26106).
+
+Tone: confident, technical-but-accessible, credible — this is a working, tested
+product with real code behind every claim, not a concept mockup. Use a dark,
+security/SOC-dashboard aesthetic (deep navy/charcoal background, electric blue
+and teal accents, monospace touches for technical details, red/amber/green for
+risk severity). Prefer clean icon-driven layouts over dense paragraphs.
+
+--- SLIDE 1: TITLE ---
+Title: "SentinelMail AI"
+Subtitle: "Email Threat Detection & Forensic Intelligence Platform"
+Tagline: "Not just 'Phishing — Risk 93/100.' Proof: why, where from, and how we know."
+Footer: "Smart India Hackathon · SIH26106"
+
+--- SLIDE 2: THE PROBLEM ---
+Headline: "Security teams triage phishing reports manually, with no evidence trail."
+Bullets:
+- Employees forward suspicious emails; analysts open raw headers by hand
+- No consistent scoring, no chain of custody, no way to see repeat campaigns
+- "Where did this come from?" is usually answered with a guess, not evidence
+- Existing tools give a verdict with no explanation an analyst can defend
+
+--- SLIDE 3: WHAT SENTINELMAIL DOES ---
+Headline: "Two questions, both answered with evidence"
+Two-column layout:
+Column 1 — "Is it malicious?": deterministic rule engines + two independently
+trained ML models + explainable 0-100 risk fusion, every point traceable to a
+named finding.
+Column 2 — "Where did it come from?": Earliest Reliable External Origin IP with
+stated confidence and reasoning, ASN/ISP/hosting classification, reverse DNS,
+DNS/WHOIS intelligence — never a guess, always labeled "unavailable" when
+evidence is insufficient.
+
+--- SLIDE 4: THE PIPELINE ---
+Headline: "One pipeline, from raw bytes to verified evidence"
+Show as a vertical flow diagram with icons at each stage:
+Evidence Preservation (SHA-256 hash, immutable storage) → Forensic Parsing
+(RFC5322/MIME + Outlook .msg) → Header Authentication (SPF/DKIM/DMARC) →
+Received-Hop Reconstruction → Earliest Reliable Origin → IOC Extraction
+(domains/IPs/URLs/attachments) → Threat Intelligence Enrichment → IP/DNS/WHOIS
+Forensics → Dual ML Models + Rule Engines → Risk Fusion → Campaign/Graph
+Correlation → Blockchain Evidence Anchor → HTML/PDF Forensic Report
+Caption: "Every stage degrades gracefully — a failed lookup never fails the case."
+
+--- SLIDE 5: THREE WAYS IN ---
+Headline: "Meets the reporter where they are"
+Three cards:
+1. "Human Upload" — drag-and-drop dashboard or direct API call, JWT-authenticated
+2. "API Key Integration" — security tools and mail gateways post emails
+   programmatically, no human login required, attributed to a dedicated
+   service account
+3. "Forward-to-Mailbox" — employees forward suspicious mail to a monitored
+   inbox; a scheduled IMAP worker polls it, extracts the true original message
+   even from "forward as attachment" wrapping, and creates a case automatically
+
+--- SLIDE 6: DUAL AI MODELS — HONEST BY DESIGN ---
+Headline: "Two models. Two different kinds of evidence. Neither is a black box."
+Table/comparison:
+Model 1 "Structural" — trained on header/authentication-failure patterns
+Model 2 "Text Content" — TF-IDF + Logistic Regression trained on ~82,000 REAL
+labeled emails from public research corpora (Enron, phishing corpora, spam
+corpora)
+Caption: "Every model prediction states its own training provenance in plain
+language — nothing is presented as more certain than it is."
+
+--- SLIDE 7: FORENSIC INFRASTRUCTURE INTELLIGENCE ---
+Headline: "Attribution, without overclaiming"
+Bullets, each paired with a small confidence-percentage badge icon:
+- Earliest Reliable External Origin IP — with stated confidence, never a guess
+- ASN / ISP / Hosting classification — "hosting/datacenter infrastructure,"
+  never "the attacker used a VPN" without evidence
+- Reverse DNS (PTR) and sender-infrastructure consistency checks
+- Passive DNS (A/MX/NS/TXT) and on-demand WHOIS domain-age intelligence
+- Geolocation shown with an explicit disclaimer: registered/observed network
+  location, not a physical location claim
+Callout box: "If it can't be determined, the system says so — it never
+fabricates a plausible-looking answer."
+
+--- SLIDE 8: EVIDENCE INTEGRITY & CHAIN OF CUSTODY ---
+Headline: "Tamper-evident by construction"
+Bullets:
+- SHA-256 hash of every raw email computed before any parsing begins
+- Blockchain-style cryptographic hash chain anchors every case's evidence hash
+  — each entry cryptographically commits to the previous one
+- Any alteration anywhere in the history is detectable on verification
+- No email content, bodies, or attachments ever leave the hash — only hashes
+- Full case status history and audit log, append-only
+Small footnote: "A hash chain for tamper-evidence, not a public distributed
+ledger — the honest, right-sized version of 'blockchain' for this problem."
+
+--- SLIDE 9: BUILT, NOT MOCKED ---
+Headline: "Real code, real tests, real numbers"
+Stat callouts (large numbers, icon per stat):
+- "45+ database tables" — normalized schema, not a prototype hack
+- "50+ automated tests, all passing" — auth, ingestion, mailbox polling,
+  forensic intelligence, blockchain verification
+- "~82,000 real emails" trained the text-content classifier
+- "5 Alembic migrations" — full schema history, reproducible from scratch
+- Dockerized: FastAPI + PostgreSQL + Redis + Celery worker/beat + pgAdmin
+Small text: "docker compose up --build — that's the entire deployment."
+
+--- SLIDE 10: ROADMAP & CLOSING ---
+Headline: "What's next"
+Roadmap bullets (clearly labeled as planned, not yet built):
+- Fuzzy, content-similarity campaign correlation (beyond exact IOC matching)
+- Real-time VPN/Tor/proxy detection via a dedicated threat-intel provider
+- Richer infrastructure graph (domain→IP resolution edges, cross-case pivoting)
+- Automated reporter notification emails with secure report links
+- OAuth2/Gmail-API ingestion alongside the existing IMAP path
+Closing line: "SentinelMail AI: evidence-based email defense — built to survive
+scrutiny, not just demo well."
+Footer: team name / contact / repository link placeholder
+
+=================================================
+END OF PROMPT
+=================================================

@@ -40,7 +40,25 @@ App Passwords only exist once 2-Step Verification is on.
 4. Keep this tab open or copy the password somewhere safe -- Google
    only shows it once.
 
-## 4. Register the mailbox with SentinelMail
+## 4. Create a dedicated Gmail label (recommended)
+
+By default SentinelMail polls a folder called **`Sentinel_Intake`**, not
+`INBOX` -- this avoids accidentally ingesting your entire pre-existing
+inbox history (thousands of old emails) the first time you connect a
+personal or long-used mailbox.
+
+1. In Gmail, click **More** in the left sidebar → **Create new label**.
+2. Name it `Sentinel_Intake`.
+3. Optionally, create a filter (Settings → Filters and Blocked
+   Addresses → Create a new filter) that auto-applies this label to
+   mail matching a subject/sender pattern you use for forwarding, so
+   forwarded reports land there automatically.
+
+If you'd rather poll your main inbox directly, just pass
+`"imap_folder": "INBOX"` explicitly when registering the mailbox in
+step 5 below.
+
+## 5. Register the mailbox with SentinelMail
 
 You need an `org_admin` account first (the first person to register
 for your organization becomes admin automatically -- see README.md).
@@ -74,7 +92,7 @@ fine either way -- IMAP libraries strip them, and so does Gmail's own
 verification of it). The response confirms the mailbox was created
 with `"is_polling_enabled": true` and never echoes the password back.
 
-## 5. Test it immediately (don't wait for the schedule)
+## 6. Test it immediately (don't wait for the schedule)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/mailboxes/<mailbox_id>/poll-now \
@@ -99,13 +117,50 @@ curl http://localhost:8000/api/v1/cases/<case_id>/risk-score -H "Authorization: 
 curl http://localhost:8000/api/v1/cases/<case_id>/findings -H "Authorization: Bearer <access_token>"
 ```
 
-## 6. Let the scheduler take over
+## 7. Let the scheduler take over
 
 Once `poll-now` works, you don't need to call it manually again --
 `docker-compose.yml`'s `worker` service runs an embedded Celery beat
 scheduler that polls every active mailbox every 2 minutes (see
 `app/workers/celery_app.py`'s `beat_schedule`). Just forward mail to
 the inbox and check back in a couple of minutes.
+
+## 8. Automatic report reply
+
+Once a case is created, SentinelMail emails the HTML report (inline)
+and PDF report (attached) **back to whoever forwarded the message** --
+sent from the same mailbox address, using the exact same App Password
+(one Gmail App Password authenticates both receiving via IMAP and
+sending via SMTP on the same account, so nothing new needs to be
+configured).
+
+This is on by default (`notify_reporter: true` when registering the
+mailbox). To disable it:
+```bash
+curl -X POST http://localhost:8000/api/v1/mailboxes -H "Authorization: Bearer <token>" -d '{
+  "address": "dk95074450@gmail.com", "imap_host": "imap.gmail.com",
+  "imap_username": "dk95074450@gmail.com", "imap_password": "<app password>",
+  "notify_reporter": false
+}'
+```
+
+**Important**: the report is sent to the *forwarding envelope's* From
+address -- e.g. if `sam95074450@gmail.com` forwards a suspicious email
+to `dk95074450@gmail.com`, the report goes back to
+`sam95074450@gmail.com`, never to any address merely *claimed* inside
+the forwarded content. This is the same reporter/sender identity
+separation enforced everywhere else in this project.
+
+If sending fails (bad credentials, provider rate limit, network issue),
+the case is **still created normally** -- only the notification attempt
+fails, and a Note on the case records what happened. Check
+`GET /cases/{id}` and look for a Note starting with "Report
+notification" if you're not receiving replies.
+
+By default SMTP host is guessed from your IMAP host
+(`imap.gmail.com` → `smtp.gmail.com`) on port 587 with STARTTLS. Pass
+`"smtp_host"`, `"smtp_port"`, or `"smtp_use_tls"` explicitly if your
+provider needs something different.
 
 ## What happens to the forwarded email, exactly
 

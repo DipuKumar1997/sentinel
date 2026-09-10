@@ -9,10 +9,9 @@ from __future__ import annotations
 import asyncio
 
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.db.session import AsyncSessionLocal
-from app.models.rbac import Permission, Role, RoleName
+from app.models.rbac import Permission, Role, RoleName, role_permissions
 
 _PERMISSIONS = [
     ("case.view", "View cases within own organization"),
@@ -78,15 +77,11 @@ async def seed() -> None:
         existing_roles = {
             r.name: r
             for r in (
-                await db.execute(
-                    select(Role).options(
-                        selectinload(Role.permissions)
-                    )
-                )
+                await db.execute(select(Role))
             ).scalars().all()
         }
 
-        for role_name, perm_codes in _ROLE_PERMISSIONS.items():
+        for role_name in _ROLE_PERMISSIONS:
             role = existing_roles.get(role_name.value)
 
             if role is None:
@@ -98,10 +93,33 @@ async def seed() -> None:
                 await db.flush()
                 existing_roles[role_name.value] = role
 
-            role.permissions = [
-                existing_perms[c]
-                for c in perm_codes
-            ]
+        existing_mappings = {
+            (role_id, permission_id)
+            for role_id, permission_id in (
+                await db.execute(
+                    select(
+                        role_permissions.c.role_id,
+                        role_permissions.c.permission_id,
+                    )
+                )
+            ).all()
+        }
+
+        for role_name, perm_codes in _ROLE_PERMISSIONS.items():
+            role = existing_roles[role_name.value]
+
+            for code in perm_codes:
+                permission = existing_perms[code]
+                mapping = (role.id, permission.id)
+
+                if mapping not in existing_mappings:
+                    await db.execute(
+                        role_permissions.insert().values(
+                            role_id=role.id,
+                            permission_id=permission.id,
+                        )
+                    )
+                    existing_mappings.add(mapping)
 
         await db.commit()
 
@@ -110,4 +128,3 @@ async def seed() -> None:
 
 if __name__ == "__main__":
     asyncio.run(seed())
-

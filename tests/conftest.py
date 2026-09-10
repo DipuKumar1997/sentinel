@@ -51,11 +51,46 @@ def _evidence_dir():
     shutil.rmtree(path, ignore_errors=True)
 
 
+@pytest_asyncio.fixture(autouse=True)
+def _mock_smtp_notifications_by_default(request):
+    """Report-notification emails (see app/services/email_notification.py)
+    make real SMTP network connections. Auto-mocked to a fast no-op for
+    every test by default, so tests that don't care about notification
+    behavior never accidentally hang on a real network call.
+
+    Tests that specifically exercise `send_report_notification()` itself
+    (see tests/test_report_notification.py) mark themselves with
+    `@pytest.mark.no_autouse_smtp_mock` to opt out of this blanket patch.
+    """
+    if "no_autouse_smtp_mock" in request.keywords:
+        yield
+        return
+
+    from unittest.mock import patch
+
+    from app.services.email_notification import NotificationResult
+
+    with patch(
+        "app.services.mailbox_polling.email_notification.send_report_notification",
+        return_value=NotificationResult(sent=False, recipient=None, error_detail="mocked in test suite"),
+    ):
+        yield
+
+
 @pytest_asyncio.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture
+def db_session_factory():
+    """Returns AsyncSessionLocal itself, for tests that need direct DB
+    access (e.g. simulating tampering by writing to a row outside the
+    normal API surface) rather than going through the HTTP client.
+    """
+    return AsyncSessionLocal
 
 
 @pytest.fixture

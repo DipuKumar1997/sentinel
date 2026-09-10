@@ -41,6 +41,10 @@ async def create_mailbox(
             imap_username=payload.imap_username,
             imap_password=payload.imap_password,
             imap_folder=payload.imap_folder,
+            smtp_host=payload.smtp_host,
+            smtp_port=payload.smtp_port,
+            smtp_use_tls=payload.smtp_use_tls,
+            notify_reporter=payload.notify_reporter,
         )
     except mailbox_service.MailboxError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

@@ -47,6 +47,9 @@ line-length = 100
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "no_autouse_smtp_mock: opt out of the autouse SMTP-notification mock (see tests/conftest.py)",
+]
 
 [tool.setuptools]
 packages = ["app"]

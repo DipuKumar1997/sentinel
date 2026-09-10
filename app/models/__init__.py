@@ -20,6 +20,8 @@ from app.models.ioc import (  # noqa: F401
     Attachment,
     IOCRecord,
     ThreatIntelligenceObservation,
+    DNSObservation,
+    BlockchainAnchor,
 )
 from app.models.analysis import (  # noqa: F401
     AnalysisRun,

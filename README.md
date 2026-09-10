@@ -22,6 +22,7 @@ credential, how a submitted email turns into a risk score -- read
 - [Training the text-content model on real data](#training-the-text-content-model-on-real-data)
 - [Database schema at a glance](#database-schema-at-a-glance)
 - [Full file manifest](#full-file-manifest)
+- [Forensic Intelligence](#forensic-intelligence-attribution-without-overclaiming)
 - [Running tests](#running-tests)
 - [Honesty notes](#honesty-notes-things-intentionally-not-faked)
 - [What's still open](#whats-still-open)
@@ -63,7 +64,7 @@ need a truly clean slate.
 |---|---|---|
 | **1. Authenticated human upload** | A logged-in user (JWT from `/auth/login`) drags a `.eml`/`.msg` file onto the dashboard, or calls `POST /ingestion/eml` directly with a Bearer token. | ✅ Implemented |
 | **2. Programmatic / API key** | A security tool or mail gateway calls `POST /ingestion/eml` with an `X-API-Key` header instead of a JWT -- no human login involved. Keys are created via `POST /api-keys` (org_admin+ only) and are tied to a dedicated, non-loginable "service account" so cases are still attributable. See `app/services/api_key_service.py`. | ✅ Implemented |
-| **3. Forward-to-mailbox** | An org forwards suspicious mail to a dedicated inbox (e.g. `security@yourcompany.com`); a Celery beat task polls it over IMAP every 2 minutes and turns each new message into a case automatically. Handles both "forward as attachment" (extracts the real original message) and plain inline forwarding. See `docs/mailbox_forwarding_setup.md` for a full Gmail walkthrough. | ✅ Implemented |
+| **3. Forward-to-mailbox** | An org forwards suspicious mail to a dedicated inbox (e.g. `security@yourcompany.com`); a Celery beat task polls it over IMAP every 2 minutes and turns each new message into a case automatically. Handles both "forward as attachment" (extracts the real original message) and plain inline forwarding. Defaults to polling a dedicated `Sentinel_Intake` label rather than `INBOX`, to avoid ingesting an entire pre-existing mailbox's history on first setup. **Automatically emails the HTML+PDF report back to whoever forwarded the message** (same mailbox, same App Password, sent via SMTP). See `docs/mailbox_forwarding_setup.md` for a full Gmail walkthrough. | ✅ Implemented |
 
 Both implemented modes end up calling the exact same function,
 `app/services/ingestion.py::ingest_email_and_create_case()` -- the only
@@ -175,6 +176,12 @@ discussion.
 | `/api/v1/mailboxes/{id}/enable`, `/disable` | PATCH | **JWT, role ≥ org_admin** | Toggle polling. |
 | `/api/v1/mailboxes/{id}` | DELETE | **JWT, role ≥ org_admin** | |
 | `/api/v1/mailboxes/{id}/poll-now` | POST | **JWT, role ≥ org_admin** | Synchronous poll, for testing without waiting for the schedule. |
+| `/api/v1/cases/{id}/origin` | GET | **JWT** | Earliest Reliable External Origin IP, confidence, and reasoning. |
+| `/api/v1/cases/{id}/ip-intelligence` | GET | **JWT** | ASN/ISP/hosting/reverse-DNS per IP IOC on the case. |
+| `/api/v1/cases/{id}/dns-observations` | GET | **JWT** | Every passive DNS query performed, including failures. |
+| `/api/v1/cases/{id}/domain-intelligence/{domain}` | GET | **JWT** | On-demand WHOIS lookup (not run automatically — see below). |
+| `/api/v1/cases/{id}/blockchain-verify` | GET | **JWT** | Compares current evidence hash against the anchored hash. |
+| `/api/v1/organizations/blockchain-verify` | GET | **JWT** | Verifies the entire organization's hash chain, not just one case. |
 | `/api/v1/healthz` | GET | None | |
 | `/ui/` | GET | None (the page itself; its own API calls need a JWT) | The dashboard. |
 | `/docs` | GET | None | Interactive OpenAPI docs. |
@@ -324,7 +331,7 @@ alembic/
     c7bd488f4839_add_account_lockout_fields_to_users.py     failed_login_attempts, locked_until
     873fb9353f04_add_api_key_service_user_columns.py        service_user_id, created_by_user_id
 
-tests/                        33 tests, all passing -- see "Running tests" below
+tests/                        62 tests, all passing -- see "Running tests" below
   conftest.py                  Fresh SQLite DB + rate-limiter reset per test
   fixtures/                     Sample phishing and benign .eml files
   test_auth.py, test_account_security.py, test_api_keys_and_roles.py,
@@ -339,6 +346,49 @@ docs/
   sih_pitch.md                    Demo script + judging-criteria alignment
 ```
 
+## Forensic Intelligence: attribution without overclaiming
+
+Beyond "is this malicious," every case also answers "where did it come
+from, and how sure are we." This is deliberately kept separate from the
+risk score -- confidence in an origin/geolocation claim is a different
+concept from how dangerous the email is.
+
+- **Earliest Reliable External Origin** (`app/services/origin_resolution.py`):
+  walks the Received-header chain from the recipient outward, skipping
+  private/internal hops, and picks the deepest well-formed public IP
+  as the origin -- with a stated confidence and a plain-English
+  explanation of the reasoning. Returns "could not be determined"
+  rather than guessing when the chain doesn't support a conclusion.
+- **IP intelligence** (`app/services/ip_intelligence.py`): reverse DNS
+  (real PTR lookups) and a hosting/datacenter classification heuristic
+  based on ASN organization name matching -- honestly labeled as a
+  heuristic, with VPN/Tor fields left `null` (unknown) rather than
+  guessed, since no real-time VPN/Tor data source is wired in.
+- **DNS forensics** (`app/services/dns_forensics.py`): real A/MX/NS/TXT
+  queries for every domain IOC, recorded append-only whether they
+  succeed or fail.
+- **Domain WHOIS** (`app/services/whois_lookup.py`): on-demand (not
+  automatic at ingestion time -- raw WHOIS is slow/unreliable across
+  networks) via `GET /cases/{id}/domain-intelligence/{domain}`.
+- **Blockchain evidence-integrity ledger** (`app/services/blockchain_ledger.py`):
+  a genuine cryptographic hash chain (not a distributed/public
+  blockchain) anchoring every case's evidence SHA-256 -- each entry
+  commits to the previous entry's hash, so tampering anywhere in the
+  history is detectable via `GET /organizations/blockchain-verify`.
+
+All of this is additive to the existing pipeline (`ingest_email_and_create_case()`
+is unchanged in its outward behavior/contract) and every new lookup
+degrades gracefully -- a DNS timeout, missing ASN data, or unreachable
+WHOIS server never fails the case, only marks that specific piece of
+intelligence "unavailable."
+
+## Presentation prompt
+
+`GAMMA_PRESENTATION_PROMPT.txt` in the project root is a ready-to-paste
+prompt for Gamma.app (or similar AI slide generators) that produces a
+10-slide pitch deck accurately describing what's built, what's
+roadmap, and why.
+
 ## Running tests
 
 ```bash
@@ -348,7 +398,7 @@ pytest -v
 
 Tests run against a throwaway SQLite database and local-filesystem
 evidence directory -- no external services, no real training data,
-required. 33 tests, all passing as of this writing.
+required. 62 tests, all passing as of this writing.
 
 ## Honesty notes (things intentionally *not* faked)
 

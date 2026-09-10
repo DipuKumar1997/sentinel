@@ -44,6 +44,17 @@ class EmailMessage(UUIDPKMixin, TimestampMixin, Base):
     has_attachments: Mapped[bool] = mapped_column(Boolean, default=False)
     attachment_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Earliest Reliable External Origin -- see app/services/origin_resolution.py
+    # for the full trust-model explanation. `origin_confidence` is
+    # deliberately a SEPARATE concept from RiskScore.score: this measures
+    # "how sure are we THIS IP is the origin," not "how dangerous is this
+    # email." origin_determined=False means the system explicitly could
+    # not establish an origin rather than guessing -- never fabricated.
+    origin_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    origin_confidence: Mapped[float | None] = mapped_column(nullable=True)
+    origin_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    origin_determined: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class EmailHeader(UUIDPKMixin, TimestampMixin, Base):
     """Every raw header, preserved verbatim and in original order."""
