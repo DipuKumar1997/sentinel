@@ -1,3 +1,4 @@
+
 """Idempotent seed script: platform roles/permissions + a demo organization.
 
 Run automatically on container startup (see docker-compose.yml). Safe to
@@ -27,11 +28,28 @@ _PERMISSIONS = [
 _ROLE_PERMISSIONS = {
     RoleName.EMPLOYEE: ["case.view"],
     RoleName.SECURITY_ANALYST: ["case.view", "evidence.view"],
-    RoleName.INVESTIGATOR: ["case.view", "case.assign", "evidence.view", "evidence.export"],
-    RoleName.SOC_ADMIN: ["case.view", "case.assign", "case.escalate", "evidence.view", "evidence.export", "user.manage"],
+    RoleName.INVESTIGATOR: [
+        "case.view",
+        "case.assign",
+        "evidence.view",
+        "evidence.export",
+    ],
+    RoleName.SOC_ADMIN: [
+        "case.view",
+        "case.assign",
+        "case.escalate",
+        "evidence.view",
+        "evidence.export",
+        "user.manage",
+    ],
     RoleName.ORG_ADMIN: [
-        "case.view", "case.assign", "case.escalate", "evidence.view", "evidence.export",
-        "user.manage", "org.manage",
+        "case.view",
+        "case.assign",
+        "case.escalate",
+        "evidence.view",
+        "evidence.export",
+        "user.manage",
+        "org.manage",
     ],
     RoleName.PLATFORM_ADMIN: [p[0] for p in _PERMISSIONS],
 }
@@ -41,12 +59,17 @@ async def seed() -> None:
     async with AsyncSessionLocal() as db:
         existing_perms = {
             p.code: p
-            for p in (await db.execute(select(Permission))).scalars().all()
+            for p in (
+                await db.execute(select(Permission))
+            ).scalars().all()
         }
 
         for code, description in _PERMISSIONS:
             if code not in existing_perms:
-                perm = Permission(code=code, description=description)
+                perm = Permission(
+                    code=code,
+                    description=description,
+                )
                 db.add(perm)
                 existing_perms[code] = perm
 
@@ -56,7 +79,9 @@ async def seed() -> None:
             r.name: r
             for r in (
                 await db.execute(
-                    select(Role).options(selectinload(Role.permissions))
+                    select(Role).options(
+                        selectinload(Role.permissions)
+                    )
                 )
             ).scalars().all()
         }
@@ -73,7 +98,10 @@ async def seed() -> None:
                 await db.flush()
                 existing_roles[role_name.value] = role
 
-            role.permissions = [existing_perms[c] for c in perm_codes]
+            role.permissions = [
+                existing_perms[c]
+                for c in perm_codes
+            ]
 
         await db.commit()
 
@@ -82,3 +110,4 @@ async def seed() -> None:
 
 if __name__ == "__main__":
     asyncio.run(seed())
+

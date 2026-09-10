@@ -1,7 +1,8 @@
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,7 +21,15 @@ class CaseStatus(str, enum.Enum):
 
 
 class Mailbox(UUIDPKMixin, TimestampMixin, Base):
-    """A dedicated security mailbox an organization forwards suspicious mail to."""
+    """A dedicated security mailbox an organization forwards suspicious
+    mail to, which this platform polls over IMAP and turns into cases.
+
+    Credentials are never stored in plaintext -- `encrypted_password` is
+    a Fernet-encrypted blob (see app/security/secret_encryption.py),
+    keyed off the application's own SECRET_KEY. Polling state
+    (`last_seen_uid`/`uid_validity`) follows the IMAP UID model so
+    restarts/re-polls never reprocess or skip messages.
+    """
 
     __tablename__ = "mailboxes"
 
@@ -30,6 +39,53 @@ class Mailbox(UUIDPKMixin, TimestampMixin, Base):
     address: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
+
+    # IMAP connection details.
+    imap_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    imap_port: Mapped[int] = mapped_column(Integer, default=993)
+    imap_use_ssl: Mapped[bool] = mapped_column(Boolean, default=True)
+    imap_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    encrypted_password: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    imap_folder: Mapped[str] = mapped_column(String(255), default="INBOX")
+
+    # Polling state.
+    is_polling_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, default=120)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_poll_status: Mapped[str | None] = mapped_column(String(32), nullable=True)  # ok|error
+    last_poll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uid_validity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_seen_uid: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Cases created from this mailbox are attributed to a dedicated,
+    # non-loginable service-account user (same pattern as ApiKey), so
+    # "who reported this" is never confused with "who the email claims
+    # to be from" -- see docs/architecture.md section 3.
+    service_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+
+
+class MailboxProcessedMessage(UUIDPKMixin, TimestampMixin, Base):
+    """Append-only de-duplication record: one row per IMAP message this
+    platform has already turned into a case (or deliberately skipped).
+    Primary de-dup key is (mailbox_id, imap_uid) since IMAP UIDs are
+    stable and unique within one UIDVALIDITY epoch; Message-ID and
+    evidence hash are recorded too as secondary, human-inspectable
+    corroboration.
+    """
+
+    __tablename__ = "mailbox_processed_messages"
+
+    mailbox_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mailboxes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    imap_uid: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    message_id_header: Mapped[str | None] = mapped_column(String(998), nullable=True)
+    evidence_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    case_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("cases.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="created")  # created|skipped_duplicate|error
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Case(UUIDPKMixin, TimestampMixin, Base):

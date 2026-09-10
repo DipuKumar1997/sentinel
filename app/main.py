@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routers import api_keys, auth, campaigns, cases, health, ingestion, reports, user_management
+from app.api.routers import api_keys, auth, campaigns, cases, health, ingestion, mailboxes, reports, user_management
 from app.core.config import settings
 from app.core.limiter import limiter
 
@@ -65,6 +65,7 @@ app.include_router(reports.router, prefix=settings.API_V1_PREFIX)
 app.include_router(campaigns.router, prefix=settings.API_V1_PREFIX)
 app.include_router(api_keys.router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_management.router, prefix=settings.API_V1_PREFIX)
+app.include_router(mailboxes.router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/")

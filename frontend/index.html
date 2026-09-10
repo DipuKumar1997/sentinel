@@ -421,7 +421,6 @@ async function loadCampaigns() {
 }
 document.getElementById("refresh-campaigns-btn").addEventListener("click", loadCampaigns);
 
-
 // ---------- case detail ----------
 function wireReportLink(elId, format, filenameFn, caseId) {
   const el = document.getElementById(elId);
@@ -445,16 +444,15 @@ function wireReportLink(elId, format, filenameFn, caseId) {
     }
   };
 }
-
 // ---------- case detail ----------
 async function openCaseDetail(c) {
   document.getElementById("app-view").classList.add("hidden");
   document.getElementById("case-detail").classList.remove("hidden");
   document.getElementById("detail-title").textContent = `Case ${c.case_number}`;
-  wireReportLink("report-html-link", "html", () => $`{c.case_number}_report.html`, c.id);
-  wireReportLink("report-pdf-link", "pdf", () => $`{c.case_number}_report.pdf`, c.id);
   // document.getElementById("report-html-link").href = `${API_BASE}/cases/${c.id}/report?format=html`;
   // document.getElementById("report-pdf-link").href = `${API_BASE}/cases/${c.id}/report?format=pdf`;
+  wireReportLink("report-html-link", "html", () => `${c.case_number}_report.html`, c.id);
+  wireReportLink("report-pdf-link", "pdf", () => `${c.case_number}_report.pdf`, c.id);
 
   const riskEl = document.getElementById("detail-risk");
   riskEl.innerHTML = `<p class="muted">Loading risk score...</p>`;

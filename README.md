@@ -63,7 +63,7 @@ need a truly clean slate.
 |---|---|---|
 | **1. Authenticated human upload** | A logged-in user (JWT from `/auth/login`) drags a `.eml`/`.msg` file onto the dashboard, or calls `POST /ingestion/eml` directly with a Bearer token. | ✅ Implemented |
 | **2. Programmatic / API key** | A security tool or mail gateway calls `POST /ingestion/eml` with an `X-API-Key` header instead of a JWT -- no human login involved. Keys are created via `POST /api-keys` (org_admin+ only) and are tied to a dedicated, non-loginable "service account" so cases are still attributable. See `app/services/api_key_service.py`. | ✅ Implemented |
-| **3. Forward-to-mailbox** | An org forwards suspicious mail to a dedicated inbox (e.g. `security@yourcompany.com`) that this platform polls via IMAP and automatically turns each new message into a case. The `Mailbox` database table already exists for this (see `app/models/case.py`), but there is no IMAP-polling worker yet. | ❌ Not implemented -- see [What's still open](#whats-still-open) |
+| **3. Forward-to-mailbox** | An org forwards suspicious mail to a dedicated inbox (e.g. `security@yourcompany.com`); a Celery beat task polls it over IMAP every 2 minutes and turns each new message into a case automatically. Handles both "forward as attachment" (extracts the real original message) and plain inline forwarding. See `docs/mailbox_forwarding_setup.md` for a full Gmail walkthrough. | ✅ Implemented |
 
 Both implemented modes end up calling the exact same function,
 `app/services/ingestion.py::ingest_email_and_create_case()` -- the only
@@ -171,6 +171,10 @@ discussion.
 | `/api/v1/api-keys/{id}` | DELETE | **JWT, role ≥ org_admin** | Revoke a key. |
 | `/api/v1/users` | GET | **JWT, role ≥ org_admin** | List colleagues in your org. |
 | `/api/v1/users/{id}/role` | PATCH | **JWT, role ≥ org_admin** | Promote/demote a colleague's role. |
+| `/api/v1/mailboxes` | POST/GET | **JWT, role ≥ org_admin** | Register/list forward-to-mailbox intake (see `docs/mailbox_forwarding_setup.md`). |
+| `/api/v1/mailboxes/{id}/enable`, `/disable` | PATCH | **JWT, role ≥ org_admin** | Toggle polling. |
+| `/api/v1/mailboxes/{id}` | DELETE | **JWT, role ≥ org_admin** | |
+| `/api/v1/mailboxes/{id}/poll-now` | POST | **JWT, role ≥ org_admin** | Synchronous poll, for testing without waiting for the schedule. |
 | `/api/v1/healthz` | GET | None | |
 | `/ui/` | GET | None (the page itself; its own API calls need a JWT) | The dashboard. |
 | `/docs` | GET | None | Interactive OpenAPI docs. |

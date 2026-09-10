@@ -6,9 +6,18 @@ venv/
 .env
 *.db
 *.sqlite3
-/data/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
 htmlcov/
 .coverage
+
+# Downloaded/user-provided training data (large; fetched via scripts/fetch_datasets.py)
+data/raw/*.csv
+data/raw/kaggle/*.csv
+!data/raw/.gitkeep
+!data/raw/kaggle/.gitkeep
+
+# Trained model artifacts produced locally by scripts/train_text_model.py
+app/ml_models/text_content_classifier.joblib
+app/ml_models/text_content_classifier.datasets.json

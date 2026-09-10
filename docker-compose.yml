@@ -53,7 +53,13 @@ services:
       - redis
     volumes:
       - evidence_data:/data/evidence
-    command: celery -A app.workers.celery_app worker --loglevel=info
+    # -B runs an embedded beat scheduler in-process alongside the worker,
+    # so the mailbox-polling sweep (see app/workers/celery_app.py) fires
+    # on schedule without a separate beat container. Fine for a single
+    # worker instance; if you ever scale to multiple worker replicas,
+    # split beat into its own single-instance service instead (running
+    # -B on more than one replica would double-schedule tasks).
+    command: celery -A app.workers.celery_app worker --beat --loglevel=info
 
   # Optional Postgres admin UI at http://localhost:5050 -- lets you browse
   # tables/run SQL against the `db` service visually. Dev convenience only;

@@ -4,7 +4,7 @@ Alembic autogeneration and for create_all() in tests.
 from app.models.organization import Organization  # noqa: F401
 from app.models.rbac import Role, Permission  # noqa: F401
 from app.models.user import User, EmailVerificationToken, RefreshToken  # noqa: F401
-from app.models.case import Mailbox, Case, CaseStatusHistory, Note, Tag, CaseTag  # noqa: F401
+from app.models.case import Mailbox, MailboxProcessedMessage, Case, CaseStatusHistory, Note, Tag, CaseTag  # noqa: F401
 from app.models.evidence import EvidenceObject, EvidenceHash, RetentionPolicy  # noqa: F401
 from app.models.email import (  # noqa: F401
     EmailMessage,
