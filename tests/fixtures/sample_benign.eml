@@ -1,0 +1,20 @@
+Delivered-To: alice@acmecorp.com
+Received: from mail.trustedpartner.com (mail.trustedpartner.com [198.51.100.20])
+    by mx.acmecorp.com with ESMTPS id xyz789
+    for <alice@acmecorp.com>; Mon, 01 Sep 2025 09:00:00 +0000
+Authentication-Results: mx.acmecorp.com; spf=pass smtp.mailfrom=trustedpartner.com; dkim=pass; dmarc=pass
+From: "Bob Partner" <bob@trustedpartner.com>
+To: alice@acmecorp.com
+Subject: Meeting notes from yesterday
+Date: Mon, 01 Sep 2025 08:59:50 +0000
+Message-ID: <20250901085950.AAAA1111@trustedpartner.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Hi Alice,
+
+Thanks for the productive meeting yesterday. I've attached the notes
+below for your reference. Let me know if you have any questions.
+
+Best,
+Bob

@@ -1,0 +1,127 @@
+{
+  "project": "SentinelMail AI (SIH26106)",
+  "checkpoint": "final",
+  "generated_at": "2026-09-05",
+  "status": "complete_end_to_end_application",
+  "test_results": {
+    "total": 23,
+    "passed": 23,
+    "failed": 0,
+    "framework": "pytest + pytest-asyncio",
+    "database_under_test": "sqlite+aiosqlite (file-based)"
+  },
+  "phases": {
+    "phase_1_foundation": {
+      "status": "complete",
+      "includes": [
+        "project skeleton", "docker-compose", "pyproject.toml",
+        "config management", "41 ORM models", "alembic migrations"
+      ]
+    },
+    "phase_2_auth_and_rbac": {
+      "status": "complete",
+      "includes": [
+        "argon2 password hashing", "JWT access tokens",
+        "rotating opaque refresh tokens", "email verification",
+        "role hierarchy RBAC", "permissions schema"
+      ]
+    },
+    "phase_3_ingestion_and_forensics": {
+      "status": "complete",
+      "includes": [
+        "eml parsing (RFC5322/MIME)", "received-hop chain reconstruction",
+        "evidence hashing and content-addressed storage",
+        "SPF/DKIM/DMARC header parsing + live DNS fallback",
+        "IOC extraction (domains/ips/urls/attachment hashes)"
+      ]
+    },
+    "phase_4_analysis_and_scoring": {
+      "status": "complete",
+      "includes": [
+        "header_forensics engine", "url_domain_analysis engine",
+        "explainable risk fusion (0-100 score + rationale)"
+      ]
+    },
+    "phase_5_api_surface": {
+      "status": "complete",
+      "includes": [
+        "auth router (register/verify/login/refresh/me)",
+        "ingestion router (.eml upload)",
+        "cases router (list/get/risk-score/findings)",
+        "tenant isolation enforced on all case reads"
+      ]
+    },
+    "phase_6_threat_intel_enrichment": {
+      "status": "complete",
+      "includes": [
+        "internal offline heuristic provider (always runs, no network needed)",
+        "VirusTotal domain lookup (used only if VIRUSTOTAL_API_KEY set)",
+        "AbuseIPDB IP lookup (used only if ABUSEIPDB_API_KEY set)",
+        "IPinfo geolocation enrichment (used only if IPINFO_TOKEN set)",
+        "threat_intelligence analysis engine feeding risk fusion",
+        "append-only ThreatIntelligenceObservation persistence"
+      ]
+    },
+    "phase_7_campaign_graph_correlation": {
+      "status": "complete",
+      "includes": [
+        "shared-IOC campaign detection across recent cases in the same org",
+        "GraphEntity/GraphRelationship population (case -> IOC edges)",
+        "GET /campaigns and GET /campaigns/{id}/cases endpoints",
+        "tenant-isolated (verified by test_campaigns_are_tenant_isolated)"
+      ]
+    },
+    "phase_8_ml_models": {
+      "status": "complete_trained_model",
+      "includes": [
+        "phishing_classifier_lr: real fitted scikit-learn LogisticRegression",
+        "trained via scripts/train_model.py on a synthetically generated labeled dataset",
+        "shared feature extraction (app/services/ml_features.py) used by training AND inference",
+        "automatic fallback to heuristic_model_v0 if the model artifact is missing",
+        "ModelPrediction persistence per analysis run, feeds risk fusion"
+      ],
+      "note": "Training data is synthetic -- no real-world labeled corpus available in this environment. See docs/threat_model.md. Swapping in real labeled data requires no pipeline changes, only re-running scripts/train_model.py against real data."
+    },
+    "phase_9_reporting": {
+      "status": "complete",
+      "includes": [
+        "self-contained HTML report generation (Jinja2 template)",
+        "native PDF report generation (fpdf2, no system rendering deps)",
+        "GET /cases/{id}/report?format=html|pdf endpoint",
+        "Report + EvidenceObject(kind=REPORT_EXPORT) persistence for audit"
+      ]
+    },
+    "phase_10_additional_formats": {
+      "status": "complete",
+      "includes": [
+        "Outlook .msg parsing via extract-msg, normalized into the same ParsedEmail shape",
+        "POST /ingestion/msg endpoint",
+        "unit tests mocking extract_msg + full HTTP round-trip test"
+      ]
+    },
+    "phase_11_frontend": {
+      "status": "complete",
+      "includes": [
+        "single-page vanilla-JS dashboard (frontend/index.html)",
+        "served at /ui/ via FastAPI StaticFiles",
+        "register/verify/login, drag-and-drop upload, case list, risk-score + findings detail, HTML/PDF report links, campaigns list"
+      ]
+    },
+    "phase_12_hardening": {
+      "status": "complete",
+      "includes": [
+        "slowapi rate limiting on /auth/login and /auth/register (10/minute)",
+        "account lockout after 5 failed logins (15 minute cooldown)",
+        "failed_login_attempts/locked_until columns + hand-written migration"
+      ]
+    }
+  },
+  "files_of_interest": {
+    "entrypoint": "app/main.py",
+    "ingestion_pipeline": "app/services/ingestion.py",
+    "risk_fusion": "app/services/risk_fusion.py",
+    "models_index": "app/models/__init__.py",
+    "initial_migration": "alembic/versions/dd0723c3586c_initial_schema.py",
+    "tests": ["tests/test_auth.py", "tests/test_ingestion.py"]
+  }
+}

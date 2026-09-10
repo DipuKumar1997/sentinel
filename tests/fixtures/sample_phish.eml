@@ -1,0 +1,23 @@
+Delivered-To: victim@acmecorp.com
+Received: from mail.suspicious-host.ru (mail.suspicious-host.ru [203.0.113.55])
+    by mx.acmecorp.com with ESMTPS id abc123
+    for <victim@acmecorp.com>; Mon, 01 Sep 2025 10:15:00 +0000
+Received: from mx.acmecorp.com (mx.acmecorp.com [198.51.100.10])
+    by internal.acmecorp.com with ESMTP id def456
+    for <victim@acmecorp.com>; Mon, 01 Sep 2025 10:15:05 +0000
+Authentication-Results: mx.acmecorp.com; spf=fail smtp.mailfrom=paypa1-secure.top; dkim=fail; dmarc=fail
+From: "PayPal Security" <alerts@paypa1-secure.top>
+Reply-To: attacker@totally-different-domain.xyz
+Return-Path: <bounce@paypa1-secure.top>
+To: victim@acmecorp.com
+Subject: Urgent Action Required: Verify Your Account Now
+Date: Mon, 01 Sep 2025 10:14:55 +0000
+Message-ID: <20250901101455.ABCD1234@paypa1-secure.top>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<html><body>
+<p>Dear Customer, your account will be closed due to unusual activity.</p>
+<p>Please <a href="http://203.0.113.99/login/verify.php">click here immediately</a> to confirm your password.</p>
+<p>Or use our short link: <a href="http://bit.ly/3xAbC99">bit.ly/3xAbC99</a></p>
+</body></html>

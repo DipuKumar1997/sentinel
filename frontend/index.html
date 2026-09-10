@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SentinelMail AI</title>
+<style>
+  :root {
+    --bg: #0f1216;
+    --panel: #161b22;
+    --panel-2: #1c222b;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --accent: #4f8cff;
+    --accent-2: #6ea8ff;
+    --critical: #ff5c5c;
+    --high: #ff9f43;
+    --medium: #ffd166;
+    --low: #8b98a5;
+    --benign: #3ddc97;
+    --radius: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 700; letter-spacing: .02em; }
+  header h1 span { color: var(--accent-2); }
+  #user-info { font-size: .85rem; color: var(--muted); display: flex; gap: .75rem; align-items: center; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: var(--radius);
+    padding: .55rem 1rem; font-size: .85rem; cursor: pointer; font-weight: 600;
+  }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: var(--critical); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input, select {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: .55rem .7rem; border-radius: var(--radius); font-size: .85rem; width: 100%;
+  }
+  label { font-size: .78rem; color: var(--muted); display: block; margin-bottom: .3rem; }
+  .field { margin-bottom: .8rem; }
+  main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  .card h2 { margin: 0 0 1rem; font-size: .95rem; color: var(--accent-2); }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 220px; }
+  .hidden { display: none !important; }
+  .tabs { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  .tabs button { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .tabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .msg { padding: .6rem .8rem; border-radius: var(--radius); font-size: .82rem; margin-bottom: .8rem; }
+  .msg.error { background: rgba(255,92,92,.12); color: var(--critical); border: 1px solid rgba(255,92,92,.3); }
+  .msg.success { background: rgba(61,220,151,.12); color: var(--benign); border: 1px solid rgba(61,220,151,.3); }
+  .msg.info { background: rgba(79,140,255,.12); color: var(--accent-2); border: 1px solid rgba(79,140,255,.3); }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: var(--panel-2); }
+  .badge { display: inline-block; padding: .2rem .6rem; border-radius: 999px; font-weight: 700; font-size: .72rem; text-transform: uppercase; }
+  .badge.malicious { background: rgba(255,92,92,.15); color: var(--critical); }
+  .badge.likely_malicious { background: rgba(255,159,67,.15); color: var(--high); }
+  .badge.suspicious { background: rgba(255,209,102,.15); color: var(--medium); }
+  .badge.benign { background: rgba(61,220,151,.15); color: var(--benign); }
+  .sev-critical { color: var(--critical); font-weight: 700; }
+  .sev-high { color: var(--high); font-weight: 700; }
+  .sev-medium { color: var(--medium); }
+  .sev-low, .sev-info { color: var(--muted); }
+  .score-big { font-size: 2.4rem; font-weight: 800; }
+  .muted { color: var(--muted); }
+  .flex-between { display: flex; justify-content: space-between; align-items: center; }
+  a.linklike { color: var(--accent-2); text-decoration: none; font-size: .85rem; }
+  a.linklike:hover { text-decoration: underline; }
+  .dropzone {
+    border: 2px dashed var(--border); border-radius: var(--radius); padding: 2rem;
+    text-align: center; color: var(--muted); font-size: .85rem; cursor: pointer;
+  }
+  .dropzone.drag { border-color: var(--accent); color: var(--accent-2); }
+  footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2rem 0 1rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sentinel<span>Mail</span> AI</h1>
+  <div id="user-info" class="hidden">
+    <span id="user-email"></span>
+    <button class="secondary" id="logout-btn">Log out</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ===================== AUTH VIEW ===================== -->
+  <section id="auth-view" class="card" style="max-width:440px;margin:3rem auto;">
+    <div class="tabs">
+      <button id="tab-login" class="active">Log in</button>
+      <button id="tab-register">Register</button>
+      <button id="tab-verify">Verify email</button>
+    </div>
+    <div id="auth-message"></div>
+
+    <form id="login-form">
+      <div class="field"><label>Email</label><input type="email" id="login-email" required></div>
+      <div class="field"><label>Password</label><input type="password" id="login-password" required></div>
+      <button type="submit">Log in</button>
+    </form>
+
+    <form id="register-form" class="hidden">
+      <div class="field"><label>Full name</label><input type="text" id="reg-name" required></div>
+      <div class="field"><label>Work email</label><input type="email" id="reg-email" required></div>
+      <div class="field"><label>Organization name</label><input type="text" id="reg-org" required></div>
+      <div class="field"><label>Password (min. 10 characters)</label><input type="password" id="reg-password" minlength="10" required></div>
+      <button type="submit">Register</button>
+    </form>
+
+    <form id="verify-form" class="hidden">
+      <div class="field"><label>Verification token</label><input type="text" id="verify-token" required placeholder="paste the token from registration"></div>
+      <button type="submit">Verify email</button>
+    </form>
+  </section>
+
+  <!-- ===================== APP VIEW ===================== -->
+  <div id="app-view" class="hidden">
+
+    <div class="card">
+      <h2>Submit a suspicious email</h2>
+      <div id="upload-message"></div>
+      <div class="dropzone" id="dropzone">
+        Drop a <strong>.eml</strong> or <strong>.msg</strong> file here, or click to choose one
+        <input type="file" id="file-input" accept=".eml,.msg" class="hidden">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Cases</h2>
+        <button class="secondary" id="refresh-cases-btn">Refresh</button>
+      </div>
+      <table id="cases-table">
+        <thead><tr><th>Case #</th><th>Status</th><th>Priority</th><th>Created</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="muted" id="cases-empty" style="display:none;">No cases yet. Submit a suspicious email above to get started.</p>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Detected campaigns</h2>
+        <button class="secondary" id="refresh-campaigns-btn">Refresh</button>
+      </div>
+      <table id="campaigns-table">
+        <thead><tr><th>Name</th><th>Detection method</th><th>Confidence</th><th>Last seen</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="muted" id="campaigns-empty" style="display:none;">No campaigns detected yet -- these appear automatically once two or more cases share an indicator of compromise.</p>
+    </div>
+
+  </div>
+
+  <!-- ===================== CASE DETAIL MODAL ===================== -->
+  <div id="case-detail" class="hidden">
+    <div class="card">
+      <div class="flex-between">
+        <h2 id="detail-title" style="margin:0;">Case</h2>
+        <button class="secondary" id="back-to-cases-btn">&larr; Back to cases</button>
+      </div>
+
+      <div id="detail-risk"></div>
+
+      <div class="flex-between" style="margin-top:1.5rem;">
+        <h2 style="margin:0;">Findings</h2>
+        <div>
+          <a class="linklike" id="report-html-link" target="#">View HTML report</a>
+          &nbsp;|&nbsp;
+          <a class="linklike" id="report-pdf-link" target="#">Download PDF report</a>
+        </div>
+      </div>
+      <table id="findings-table">
+        <thead><tr><th>Engine</th><th>Code</th><th>Severity</th><th>Confidence</th><th>Description</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<footer>SentinelMail AI &mdash; prototype forensic email triage platform (SIH26106). Not a substitute for professional security review.</footer>
+
+<script>
+const API_BASE = "/api/v1";
+let state = { accessToken: null, refreshToken: null, user: null, lastVerificationToken: null };
+
+// ---------- persistence (session only) ----------
+function saveSession() {
+  if (state.accessToken) sessionStorage.setItem("sm_access_token", state.accessToken);
+  if (state.refreshToken) sessionStorage.setItem("sm_refresh_token", state.refreshToken);
+}
+function loadSession() {
+  state.accessToken = sessionStorage.getItem("sm_access_token");
+  state.refreshToken = sessionStorage.getItem("sm_refresh_token");
+}
+function clearSession() {
+  sessionStorage.removeItem("sm_access_token");
+  sessionStorage.removeItem("sm_refresh_token");
+  state.accessToken = null; state.refreshToken = null; state.user = null;
+}
+
+// ---------- API helper ----------
+async function api(path, options = {}) {
+  const headers = options.headers || {};
+  if (state.accessToken) headers["Authorization"] = "Bearer " + state.accessToken;
+  if (options.body && !(options.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(API_BASE + path, { ...options, headers });
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* non-JSON response */ }
+  if (!res.ok) {
+    const detail = (data && data.detail) ? data.detail : `Request failed (${res.status})`;
+    throw new Error(detail);
+  }
+  return data;
+}
+
+function showMessage(elId, text, kind = "info") {
+  const el = document.getElementById(elId);
+  el.innerHTML = `<div class="msg ${kind}">${text}</div>`;
+}
+function clearMessage(elId) { document.getElementById(elId).innerHTML = ""; }
+
+// ---------- auth tabs ----------
+const tabs = { login: "login-form", register: "register-form", verify: "verify-form" };
+["login", "register", "verify"].forEach(name => {
+  document.getElementById(`tab-${name}`).addEventListener("click", () => {
+    Object.values(tabs).forEach(id => document.getElementById(id).classList.add("hidden"));
+    document.getElementById(tabs[name]).classList.remove("hidden");
+    document.querySelectorAll(".tabs button").forEach(b => b.classList.remove("active"));
+    document.getElementById(`tab-${name}`).classList.add("active");
+    clearMessage("auth-message");
+  });
+});
+
+// ---------- register ----------
+document.getElementById("register-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearMessage("auth-message");
+  try {
+    const result = await api("/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        full_name: document.getElementById("reg-name").value,
+        email: document.getElementById("reg-email").value,
+        password: document.getElementById("reg-password").value,
+        organization_name: document.getElementById("reg-org").value,
+      }),
+    });
+    const tokenMatch = result.message.match(/verification_token=(\S+)/);
+    if (tokenMatch) {
+      state.lastVerificationToken = tokenMatch[1];
+      document.getElementById("verify-token").value = tokenMatch[1];
+    }
+    showMessage("auth-message",
+      "Registered! In production a verification email would be sent -- for this demo, the token has been pre-filled on the Verify tab.",
+      "success");
+    document.getElementById("tab-verify").click();
+  } catch (err) {
+    showMessage("auth-message", err.message, "error");
+  }
+});
+
+// ---------- verify ----------
+document.getElementById("verify-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearMessage("auth-message");
+  try {
+    await api("/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ token: document.getElementById("verify-token").value }),
+    });
+    showMessage("auth-message", "Email verified! You can now log in.", "success");
+    document.getElementById("tab-login").click();
+  } catch (err) {
+    showMessage("auth-message", err.message, "error");
+  }
+});
+
+// ---------- login ----------
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  clearMessage("auth-message");
+  try {
+    const result = await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        email: document.getElementById("login-email").value,
+        password: document.getElementById("login-password").value,
+      }),
+    });
+    state.accessToken = result.access_token;
+    state.refreshToken = result.refresh_token;
+    saveSession();
+    await enterApp();
+  } catch (err) {
+    showMessage("auth-message", err.message, "error");
+  }
+});
+
+document.getElementById("logout-btn").addEventListener("click", () => {
+  clearSession();
+  document.getElementById("app-view").classList.add("hidden");
+  document.getElementById("case-detail").classList.add("hidden");
+  document.getElementById("auth-view").classList.remove("hidden");
+  document.getElementById("user-info").classList.add("hidden");
+});
+
+// ---------- entering the app ----------
+async function enterApp() {
+  try {
+    state.user = await api("/auth/me");
+  } catch (err) {
+    clearSession();
+    showMessage("auth-message", "Session expired, please log in again.", "error");
+    return;
+  }
+  document.getElementById("auth-view").classList.add("hidden");
+  document.getElementById("app-view").classList.remove("hidden");
+  document.getElementById("user-info").classList.remove("hidden");
+  document.getElementById("user-email").textContent = `${state.user.email} (${state.user.role})`;
+  await Promise.all([loadCases(), loadCampaigns()]);
+}
+
+// ---------- file upload ----------
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("file-input");
+dropzone.addEventListener("click", () => fileInput.click());
+["dragenter", "dragover"].forEach(evt => dropzone.addEventListener(evt, (e) => {
+  e.preventDefault(); dropzone.classList.add("drag");
+}));
+["dragleave", "drop"].forEach(evt => dropzone.addEventListener(evt, (e) => {
+  e.preventDefault(); dropzone.classList.remove("drag");
+}));
+dropzone.addEventListener("drop", (e) => {
+  const file = e.dataTransfer.files[0];
+  if (file) handleUpload(file);
+});
+fileInput.addEventListener("change", () => {
+  if (fileInput.files[0]) handleUpload(fileInput.files[0]);
+});
+
+async function handleUpload(file) {
+  clearMessage("upload-message");
+  const lower = file.name.toLowerCase();
+  const endpoint = lower.endsWith(".msg") ? "/ingestion/msg" : "/ingestion/eml";
+  if (!lower.endsWith(".eml") && !lower.endsWith(".msg")) {
+    showMessage("upload-message", "Only .eml and .msg files are supported.", "error");
+    return;
+  }
+  showMessage("upload-message", `Analyzing ${file.name}...`, "info");
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const result = await api(endpoint, { method: "POST", body: formData });
+    showMessage("upload-message", result.message, "success");
+    await loadCases();
+    await loadCampaigns();
+  } catch (err) {
+    showMessage("upload-message", err.message, "error");
+  }
+}
+
+// ---------- cases list ----------
+async function loadCases() {
+  const cases = await api("/cases");
+  const tbody = document.querySelector("#cases-table tbody");
+  tbody.innerHTML = "";
+  document.getElementById("cases-empty").style.display = cases.length ? "none" : "block";
+  cases.forEach(c => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable";
+    tr.innerHTML = `
+      <td>${c.case_number}</td>
+      <td>${c.status}</td>
+      <td>${c.priority}</td>
+      <td>${new Date(c.created_at).toLocaleString()}</td>
+    `;
+    tr.addEventListener("click", () => openCaseDetail(c));
+    tbody.appendChild(tr);
+  });
+}
+document.getElementById("refresh-cases-btn").addEventListener("click", loadCases);
+
+// ---------- campaigns list ----------
+async function loadCampaigns() {
+  const campaigns = await api("/campaigns");
+  const tbody = document.querySelector("#campaigns-table tbody");
+  tbody.innerHTML = "";
+  document.getElementById("campaigns-empty").style.display = campaigns.length ? "none" : "block";
+  campaigns.forEach(c => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${c.name}</td>
+      <td>${c.detection_method}</td>
+      <td>${(c.confidence * 100).toFixed(0)}%</td>
+      <td>${c.last_seen_at ? new Date(c.last_seen_at).toLocaleString() : "--"}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+document.getElementById("refresh-campaigns-btn").addEventListener("click", loadCampaigns);
+
+
+// ---------- case detail ----------
+function wireReportLink(elId, format, filenameFn, caseId) {
+  const el = document.getElementById(elId);
+  el.onclick = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_BASE}/cases/${caseId}/report?format=${format}`, {
+        headers: { "Authorization": "Bearer " + state.accessToken },
+      });
+      if (!res.ok) { alert("Could not generate report."); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (format === "pdf") {
+        const a = document.createElement("a");
+        a.href = url; a.download = filenameFn(); a.click();
+      } else {
+        window.open(url, "_blank");
+      }
+    } catch (err) {
+      alert("Could not generate report: " + err.message);
+    }
+  };
+}
+// ---------- case detail ----------
+async function openCaseDetail(c) {
+  document.getElementById("app-view").classList.add("hidden");
+  document.getElementById("case-detail").classList.remove("hidden");
+  document.getElementById("detail-title").textContent = `Case ${c.case_number}`;
+  wireReportLink("report-html-link", "html", () => ${c.case_number}_report.html, c.id);
+  wireReportLink("report-pdf-link", "pdf", () => ${c.case_number}_report.pdf, c.id);
+
+  const riskEl = document.getElementById("detail-risk");
+  riskEl.innerHTML = `<p class="muted">Loading risk score...</p>`;
+  try {
+    const risk = await api(`/cases/${c.id}/risk-score`);
+    riskEl.innerHTML = `
+      <div class="row">
+        <div>
+          <span class="badge ${risk.classification}">${risk.classification.replace("_", " ")}</span>
+          <div class="score-big">${risk.score}<span class="muted" style="font-size:1rem;">/100</span></div>
+          <p class="muted">Confidence: ${risk.confidence_band}</p>
+        </div>
+        <div style="flex:2;">
+          <pre style="white-space:pre-wrap;font-size:.8rem;color:var(--muted);background:var(--panel-2);padding:.75rem;border-radius:8px;">${risk.rationale_summary}</pre>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    riskEl.innerHTML = `<p class="muted">No risk score available yet.</p>`;
+  }
+
+  const findings = await api(`/cases/${c.id}/findings`);
+  const tbody = document.querySelector("#findings-table tbody");
+  tbody.innerHTML = "";
+  findings.forEach(f => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${f.engine}</td>
+      <td>${f.code}</td>
+      <td class="sev-${f.severity}">${f.severity}</td>
+      <td>${f.confidence.toFixed(2)}</td>
+      <td>${f.description}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+document.getElementById("back-to-cases-btn").addEventListener("click", () => {
+  document.getElementById("case-detail").classList.add("hidden");
+  document.getElementById("app-view").classList.remove("hidden");
+});
+
+// ---------- boot ----------
+(async function boot() {
+  loadSession();
+  if (state.accessToken) {
+    await enterApp();
+  }
+})();
+</script>
+
+</body>
+</html>
